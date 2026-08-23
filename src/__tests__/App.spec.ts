@@ -14,10 +14,16 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { Editor } from '@tiptap/vue-3'
 import App from '../App.vue'
+import { 見出しの題名, 見出し記号 } from '../document/heading'
 import { clearDocument, loadDocument, saveDocument } from '../store/persistence'
 
 async function 起動() {
-  const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+  // ⚠ 本物の document に挿さないと `view.hasFocus()` が真にならず、
+  //   フォーカス由来の表示（要望1）が 1 度も通らないまま緑になる。
+  const wrapper = mount(App, {
+    attachTo: document.body,
+    global: { plugins: [createPinia()] },
+  })
   // ⚠ 起動時の読み出しは IndexedDB のイベント経由なので、microtask 1 周では終わらない。
   for (let i = 0; i < 50; i += 1) {
     await flushPromises()
@@ -61,7 +67,7 @@ describe('App', () => {
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 'ほぞんした見出し' }],
+          content: [{ type: 'text', text: 見出し記号(1) + 'ほぞんした見出し' }],
         },
         { type: 'paragraph', content: [{ type: 'text', text: 'ほぞんした本文' }] },
       ],
@@ -81,7 +87,7 @@ describe('App', () => {
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 'あとから足した章' }],
+          content: [{ type: 'text', text: 見出し記号(1) + 'あとから足した章' }],
         },
       ],
     })
@@ -102,7 +108,7 @@ describe('App', () => {
     const 見出し = editor.state.schema.node(
       'heading',
       { level: 1 },
-      editor.state.schema.text('カーソルから離れた所に足した章'),
+      editor.state.schema.text(見出し記号(1) + 'カーソルから離れた所に足した章'),
     )
     editor.view.dispatch(editor.state.tr.insert(editor.state.doc.content.size, 見出し))
     await nextTick()
@@ -144,9 +150,17 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
     await saveDocument({
       type: 'doc',
       content: [
-        { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'あかしょう' }] },
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 見出し記号(1) + 'あかしょう' }],
+        },
         { type: 'paragraph', content: [{ type: 'text', text: 'あかの本文' }] },
-        { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'あおしょう' }] },
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 見出し記号(1) + 'あおしょう' }],
+        },
         { type: 'paragraph', content: [{ type: 'text', text: 'あおの本文' }] },
       ],
     })
@@ -156,7 +170,7 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
   function 章の並び(wrapper: Awaited<ReturnType<typeof 起動>>): string[] {
     const out: string[] = []
     本体(wrapper).state.doc.forEach((node) => {
-      if (node.type.name === 'heading') out.push(node.textContent)
+      if (node.type.name === 'heading') out.push(見出しの題名(node.textContent))
     })
     return out
   }
@@ -210,8 +224,16 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
     await saveDocument({
       type: 'doc',
       content: [
-        { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'おやしょう' }] },
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'このせつ' }] },
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 見出し記号(1) + 'おやしょう' }],
+        },
+        {
+          type: 'heading',
+          attrs: { level: 2 },
+          content: [{ type: 'text', text: 見出し記号(2) + 'このせつ' }],
+        },
       ],
     })
     const wrapper = await 起動()
@@ -222,6 +244,199 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
 
     expect(wrapper.text()).toContain('そこへは移せません')
     expect(章の並び(wrapper)).toEqual(['おやしょう', 'このせつ'])
+    wrapper.unmount()
+  })
+})
+
+/**
+ * ロイスが実機を触って出した要望（2026-08-23）。
+ */
+describe('要望1: フォーカスの所在をブロック単位で示す', () => {
+  it('⭐ ブラウザ既定の枠に頼らず、カーソルの居るブロックに印が付く', async () => {
+    const wrapper = await 起動()
+    const editor = 本体(wrapper)
+    // ⚠ jsdom は contenteditable にフォーカスを当てられないので、
+    //   ブラウザと同じ DOM イベントを直接起こす（ProseMirror が受ける経路は同じ）。
+    editor.view.dom.dispatchEvent(new FocusEvent('focus'))
+    await nextTick()
+
+    // 印はブロック単位（ProseMirror の直下の要素）に付く
+    expect(wrapper.findAll('.現在のブロック').length).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('⭐ フォーカスが無いときは印を出さない（＝これがフォーカスの所在を示している）', async () => {
+    const wrapper = await 起動()
+    const editor = 本体(wrapper)
+    editor.view.dom.dispatchEvent(new FocusEvent('focus'))
+    await nextTick()
+    expect(wrapper.findAll('.現在のブロック').length).toBe(1)
+
+    editor.view.dom.dispatchEvent(new FocusEvent('blur'))
+    await nextTick()
+    expect(wrapper.findAll('.現在のブロック').length).toBe(0)
+    wrapper.unmount()
+  })
+})
+
+describe('要望3: ドラッグ中に挿入位置のガイドが出る', () => {
+  async function 三章立てで起動() {
+    await saveDocument({
+      type: 'doc',
+      content: [
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 見出し記号(1) + 'いち' }],
+        },
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 見出し記号(1) + 'に' }],
+        },
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 見出し記号(1) + 'さん' }],
+        },
+      ],
+    })
+    return 起動()
+  }
+
+  it('⭐ ガイドは dropTargetPos と同じ場所を指す（下へ運ぶと、相手の次の項目の手前）', async () => {
+    const wrapper = await 三章立てで起動()
+    const items = wrapper.findAll('.outline__item')
+    await items[0]!.trigger('dragstart')
+    await items[1]!.trigger('dragover')
+    await nextTick()
+
+    // 「いち」を「に」の場所へ→「に」のうしろ＝「さん」の手前に線が出る
+    const 線のある項目 = wrapper.findAll('.outline__item--guide')
+    expect(線のある項目).toHaveLength(1)
+    expect(線のある項目[0]!.text()).toContain('さん')
+    wrapper.unmount()
+  })
+
+  it('上へ運ぶときは相手の手前に出る', async () => {
+    const wrapper = await 三章立てで起動()
+    const items = wrapper.findAll('.outline__item')
+    await items[2]!.trigger('dragstart')
+    await items[0]!.trigger('dragover')
+    await nextTick()
+
+    const 線のある項目 = wrapper.findAll('.outline__item--guide')
+    expect(線のある項目).toHaveLength(1)
+    expect(線のある項目[0]!.text()).toContain('いち')
+    wrapper.unmount()
+  })
+
+  it('⭐ ガイドが指した場所に、実際に落ちる（見えている線と着地が一致する）', async () => {
+    const wrapper = await 三章立てで起動()
+    const items = wrapper.findAll('.outline__item')
+    await items[0]!.trigger('dragstart')
+    await items[1]!.trigger('dragover')
+    await nextTick()
+    const 予告 = wrapper.findAll('.outline__item--guide')[0]!.text()
+    expect(予告).toContain('さん')
+
+    await items[1]!.trigger('drop')
+    await nextTick()
+    // 「いち」は「さん」の手前＝2 番目に着地する
+    expect(
+      wrapper.findAll('.outline__item').map((i) => i.text().replace(/[←→]/g, '').trim()),
+    ).toEqual(['に', 'いち', 'さん'])
+    wrapper.unmount()
+  })
+
+  it('落としたらガイドは消える', async () => {
+    const wrapper = await 三章立てで起動()
+    const items = wrapper.findAll('.outline__item')
+    await items[0]!.trigger('dragstart')
+    await items[1]!.trigger('dragover')
+    await nextTick()
+    expect(wrapper.findAll('.outline__item--guide')).toHaveLength(1)
+
+    await items[1]!.trigger('drop')
+    await nextTick()
+    expect(wrapper.findAll('.outline__item--guide')).toHaveLength(0)
+    wrapper.unmount()
+  })
+})
+
+describe('要望4: 「これ以上は変えられません」が出るタイミング', () => {
+  async function 起動して(content: unknown) {
+    await saveDocument(content)
+    return 起動()
+  }
+  function 見出し(level: number, text: string) {
+    return {
+      type: 'heading',
+      attrs: { level },
+      content: [{ type: 'text', text: 見出し記号(level) + text }],
+    }
+  }
+
+  it('⭐ 陰性: 上限に「達しただけ」では何も出ない（ボタンが押せないことで示す）', async () => {
+    const wrapper = await 起動して({ type: 'doc', content: [見出し(6, 'げんかい')] })
+    const btns = wrapper.findAll('.outline__item')[0]!.findAll('button')
+    // → は押せない＝「達している」ことが見た目で分かる
+    expect(btns[1]!.attributes('disabled')).toBeDefined()
+    await btns[1]!.trigger('click')
+    await nextTick()
+    expect(wrapper.text()).not.toContain('これ以上')
+    expect(wrapper.text()).not.toContain('ずらせない')
+    wrapper.unmount()
+  })
+
+  it('⭐ 陰性: 下限でも同じ（← が押せず、知らせも出ない）', async () => {
+    const wrapper = await 起動して({ type: 'doc', content: [見出し(1, 'いちばんうえ')] })
+    const btns = wrapper.findAll('.outline__item')[0]!.findAll('button')
+    expect(btns[0]!.attributes('disabled')).toBeDefined()
+    await btns[0]!.trigger('click')
+    await nextTick()
+    expect(wrapper.text()).not.toContain('ずらせない')
+    wrapper.unmount()
+  })
+
+  it('⭐ 陽性: 見えない理由で断られたときだけ知らせが出る（配下が押し出される）', async () => {
+    // 親 5・子 6。親を下げると子が 7 になってしまう＝左ペインからは分からない理由
+    const wrapper = await 起動して({
+      type: 'doc',
+      content: [見出し(5, 'おや'), 見出し(6, 'こ')],
+    })
+    const btns = wrapper.findAll('.outline__item')[0]!.findAll('button')
+    expect(btns[1]!.attributes('disabled')).toBeUndefined() // 親自身は下げられる見た目
+    await btns[1]!.trigger('click')
+    await nextTick()
+
+    expect(wrapper.text()).toContain('これ以上ずらせない見出しがあります')
+    wrapper.unmount()
+  })
+
+  it('⭐ そのとき本文は変わっていない（黙って潰さない）', async () => {
+    const wrapper = await 起動して({
+      type: 'doc',
+      content: [見出し(5, 'おや'), 見出し(6, 'こ')],
+    })
+    await wrapper.findAll('.outline__item')[0]!.findAll('button')[1]!.trigger('click')
+    await nextTick()
+
+    const levels: number[] = []
+    本体(wrapper).state.doc.forEach((n) => {
+      if (n.type.name === 'heading') levels.push(Number(n.attrs.level))
+    })
+    // 以前はここが [6, 6] になって、親子が同じ深さに潰れていた
+    expect(levels).toEqual([5, 6])
+    wrapper.unmount()
+  })
+
+  it('普通に変えられるときは知らせを出さない', async () => {
+    const wrapper = await 起動して({ type: 'doc', content: [見出し(2, 'ふつう')] })
+    await wrapper.findAll('.outline__item')[0]!.findAll('button')[1]!.trigger('click')
+    await nextTick()
+    expect(wrapper.text()).not.toContain('ずらせない')
+    expect(本体(wrapper).state.doc.child(0).textContent).toBe('### ふつう')
     wrapper.unmount()
   })
 })

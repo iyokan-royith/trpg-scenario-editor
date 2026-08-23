@@ -2,6 +2,8 @@ import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import type { Schema } from '@tiptap/pm/model'
 import { PartRef } from '../p0/partRefExtension'
+import { HeadingSync, SourceHeading } from './headingSource'
+import { CurrentBlock } from './currentBlock'
 
 /**
  * P1 のエディタが使う拡張一式。
@@ -11,8 +13,14 @@ import { PartRef } from '../p0/partRefExtension'
  *    md 往復（往復テストの対象）がアプリ側でだけ壊れうる。
  */
 export const documentExtensions = [
-  // 見出し記号（`## `）を打つと見出しになる入力規則は Heading が持っている（完了条件 #1）。
-  StarterKit,
+  // ⚠ 既定の Heading は「記号を消して見出しにする」入力規則を持っていて、
+  //   ソース方式（CONCEPT Q2 改訂）と正面からぶつかるので **切ってある**。
+  StarterKit.configure({ heading: false }),
+  // 記号を本文に残す見出し（完了条件 #1・2026-08-23 改訂）
+  SourceHeading,
+  HeadingSync,
+  // フォーカスの所在をブロック単位で示す（要望1）
+  CurrentBlock,
   // P0 で実証済みのパート参照ノード。P1 では「本文に居ても壊れない」ことだけを担保する。
   PartRef,
 ]

@@ -23,9 +23,15 @@ import {
   topLevelBoundaries,
 } from '../sections'
 import { flattenOutline, outline } from '../outline'
+import { 見出しの題名, 見出し記号 } from '../heading'
 
+/** ⚠ 記号は本物のテキスト（CONCEPT Q2 改訂・2026-08-23）。 */
 function 見出し(level: number, text: string) {
-  return { type: 'heading', attrs: { level }, content: [{ type: 'text', text }] }
+  return {
+    type: 'heading',
+    attrs: { level },
+    content: [{ type: 'text', text: 見出し記号(level) + text }],
+  }
 }
 function 段落(text: string) {
   return { type: 'paragraph', content: [{ type: 'text', text }] }
@@ -38,9 +44,10 @@ function 境界(): number[] {
   return topLevelBoundaries(editor.state.doc)
 }
 
+/** ⚠ 見出しには記号が入っているので、並びの照合では剥がす（ツリーと同じ見え方にする）。 */
 function 本文の並び(): string[] {
   const out: string[] = []
-  editor.state.doc.forEach((node) => out.push(node.textContent))
+  editor.state.doc.forEach((node) => out.push(見出しの題名(node.textContent)))
   return out
 }
 

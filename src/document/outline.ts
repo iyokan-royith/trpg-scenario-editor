@@ -1,6 +1,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { PART_REF_NODE } from '../p0/partRefExtension'
 import { partKeyOf, type Part } from '../p0/model'
+import { 見出しの題名, 見出しレベル } from './heading'
 
 /** 左ペインに出る 1 項目。⚠ これは **導出値** であり、保存しない（DESIGN 1-2）。 */
 export interface OutlineItem {
@@ -36,6 +37,10 @@ const MAX_LEVEL = 6
  *   データ側から消えたパート（dangling）も出さない —— それは
  *   `analyzePlacement()` の責務で、ツリーは「今ある見出し」だけを写す。
  *
+ * ⚠ 見出しかどうかは **本文の記号**で決まる（`attrs.level` は見ない）。
+ *   記号は本物のテキストとして本文に残っているので、**題名からは剥がして**ツリーに出す
+ *   （左ペインに `## みだし` と出てはいけない）。
+ *
  * ⚠ 走査するのは doc の直下のブロックだけ（引用の中などに入れた参照は拾わない）。
  *   v0 の本文は 1 枚の連続文書（CONCEPT Q5）でネストを作らないため。
  */
@@ -61,8 +66,11 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
   }
 
   doc.forEach((node, offset) => {
-    if (node.type.name === 'heading') {
-      const level = Number(node.attrs.level) || 1
+    // ⭐ レベルも題名も **本文のテキストから導出する**（`attrs.level` は読まない）。
+    //   CONCEPT Q2 改訂で記号が本文に残るようになり、真実がテキスト側へ移ったため。
+    const レベル = 見出しレベル(node.textContent)
+    if (レベル !== null) {
+      const level = レベル
       // 同レベル以上の見出しまで巻き戻してから、自分をぶら下げて祖先になる。
       while (見出しの祖先.length > 0 && 見出しの祖先[見出しの祖先.length - 1]!.level >= level) {
         見出しの祖先.pop()
@@ -70,7 +78,7 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
       const item: OutlineItem = {
         kind: '見出し',
         level,
-        title: node.textContent,
+        title: 見出しの題名(node.textContent),
         pos: offset,
         children: [],
       }
