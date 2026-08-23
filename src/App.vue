@@ -61,9 +61,22 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  saver.stop()
+  // ⚠ stop() だけだと保留中の書き込みを捨てる。閉じる前に必ず流す。
+  // ⚠ ただし **ブラウザのタブを閉じる／リロードするときはここが呼ばれる保証が無い**。
+  //   自動保存の待ち時間（500ms）以内の打鍵は、その場合ひとつ前の状態に戻りうる。
+  //   要検証[実ブラウザで、文字を打った直後（1 秒以内）にリロードして
+  //          直前の打鍵が残るか。残らないなら beforeunload での書き込みを足すか、
+  //          待ち時間を詰めるかを決める]
+  void saver.flush().finally(() => saver.stop())
   editor.value?.destroy()
 })
+
+/**
+ * ⚠ テストから本文を触るためだけの口。
+ *   これが無いと「本文を編集すると左ペインが追従する」の**アプリ側の配線**（版 → computed）が
+ *   1 行も通らないまま緑になる。
+ */
+defineExpose({ editor })
 
 function 移動(payload: { from: number; to: number }) {
   const ed = editor.value
