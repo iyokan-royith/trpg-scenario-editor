@@ -43,7 +43,7 @@ export function isPatternOutput(output: OutputDef): output is { pattern: string 
  *   「パートを生まない配列（`敵[]` `トラップ[]`）は **inline-seq の中で順序どおり描画する**」と
  *   要求しているのに、`inline ::= text | field-ref | image-ref | html` に反復が無く
  *   **書けなかった**ため、`repeat` と同じ `over(配列フィールド)` の概念を 1 構文だけ足した。
- *   → 設計書へ昇格させるべき差分として報告する（勝手な拡張ではなく、仕様内部の矛盾の解消）。
+ *   → 設計書 §1-6-7 に昇格済み（勝手な拡張ではなく、仕様内部の矛盾の解消）。
  */
 export type InlineNode =
   | { node: 'text'; text: string }
@@ -64,7 +64,7 @@ export type InlineSeq = InlineNode[]
  * ⚠⚠ **`key` は BNF に無いが必須である。** パートの `partId` は
  *   `partRef.attrs` として**本文に保存される契約**（§1-8-2b）なので、
  *   配列の添字から導出すると要素を 1 つ消しただけで後ろ全部の配置がずれる（P0 知見 2）。
- *   → **宣言側が安定した名前を持つ**。設計書へ昇格させるべき差分として報告する。
+ *   → **宣言側が安定した名前を持つ**。設計書 §1-6-7 に昇格済み。
  */
 export type PartNode =
   | { node: 'blockPart'; key: string; title: InlineSeq; body: InlineSeq[] }
