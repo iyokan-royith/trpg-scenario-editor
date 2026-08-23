@@ -1,17 +1,27 @@
 /**
  * P1-3: 左ペインからの並べ替え・階層変更で、本文の順序が実際に変わる。
  *
- * ⚠ ここで検証しているのは **ドキュメントへの操作**であって、
- *   マウスのドラッグ操作（DOM イベント）ではない。
- *   要検証[実際のブラウザ（npm run dev）で、左ペインの項目をドラッグして
- *          並べ替え・階層変更ができることを目視確認する]
+ * ⚠ ここで検証しているのは **ドキュメントへの操作**だけ。
+ *   左ペインの操作（dragstart/drop・階層ボタン）から App のハンドラを経てここへ届くまでの
+ *   配線は `src/__tests__/App.spec.ts` が jsdom の DOM イベントで通している。
+ *   両方を合わせても、なお通っていないのは次の層だけ:
+ *   要検証[実ブラウザで、HTML5 のドラッグ&ドロップ（実際のマウス操作・dataTransfer 込み）で
+ *          左ペインの項目を並べ替えられることを目視確認する。
+ *          jsdom の dragstart/drop は dataTransfer を持たない合成イベントなので、
+ *          ブラウザ既定のドラッグ挙動（drag image・dropEffect）までは再現していない]
  *
  * ⚠ 検証データは全て創作。
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { Editor } from '@tiptap/vue-3'
 import { documentExtensions } from '../schema'
-import { moveSection, sectionRangeAt, setSectionLevel, topLevelBoundaries } from '../sections'
+import {
+  dropTargetPos,
+  moveSection,
+  sectionRangeAt,
+  setSectionLevel,
+  topLevelBoundaries,
+} from '../sections'
 import { flattenOutline, outline } from '../outline'
 
 function 見出し(level: number, text: string) {
@@ -103,6 +113,35 @@ describe('P1-3a: 並べ替え', () => {
 
   it('ブロック境界でない位置は受け付けない', () => {
     expect(moveSection(editor.state, 0, 1)).toBeNull()
+  })
+})
+
+describe('P1-3a: 落とした先 → 挿入位置の翻訳（dropTargetPos）', () => {
+  it('⭐ すぐ下の兄弟へ落とすと「1 つ下へ動く」（相手のうしろ）', () => {
+    // ⚠ ここが「相手の前に挿す」意味だと、動かない位置を指してしまい
+    //   リスト UI でいちばん自然な「1 つ下へ」が死ぬ。
+    const あか = 境界()[0]!
+    const あお = 境界()[4]!
+    const dest = dropTargetPos(editor.state.doc, あか, あお)!
+    expect(dest).toBe(editor.state.doc.content.size)
+
+    editor.view.dispatch(moveSection(editor.state, あか, dest)!)
+    expect(outline(editor.state.doc).map((i) => i.title)).toEqual(['あおしょう', 'あかしょう'])
+  })
+
+  it('すぐ上の兄弟へ落とすと「1 つ上へ動く」（相手のまえ）', () => {
+    const あお = 境界()[4]!
+    const あか = 境界()[0]!
+    const dest = dropTargetPos(editor.state.doc, あお, あか)!
+    expect(dest).toBe(0)
+
+    editor.view.dispatch(moveSection(editor.state, あお, dest)!)
+    expect(outline(editor.state.doc).map((i) => i.title)).toEqual(['あおしょう', 'あかしょう'])
+  })
+
+  it('自分自身・自分の配下へは落とせない', () => {
+    expect(dropTargetPos(editor.state.doc, 0, 0)).toBeNull()
+    expect(dropTargetPos(editor.state.doc, 0, 境界()[2]!)).toBeNull()
   })
 })
 

@@ -11,6 +11,27 @@ import { documentSchema } from './schema'
  *    → このファイルを丸ごと消しても、保存データもモデルも無傷でいられる
  *      （= 依存 markdown-it / prosemirror-markdown の捨て方でもある）。
  *
+ * ## 依存を足した理由（①なぜ ②なぜこれ ③どう捨てるか）
+ *
+ * - **①なぜ**: 貼り付け（#4）と往復（#5）で扱うのは**外から来る実物の md** である。
+ *   自作パーサだと自作のフィクスチャでだけ緑になり、実物で崩れても気づけない。
+ * - **②なぜこれ**（`prosemirror-markdown` + `markdown-it`）:
+ *   - `prosemirror-markdown` は **ProseMirror 本体と同じ作者・同じ組織が出している公式パッケージ**で、
+ *     `Schema` を引数に取る設計なので **Tiptap の独自ノード（`partRef`）を後から差し込める**。
+ *     P3 でパート参照の展開を足すとき、**同じ表に 1 行足すだけで済む**のが決め手。
+ *     ライセンス MIT・依存は `markdown-it` と `prosemirror-model` だけ。
+ *   - `markdown-it` は **CommonMark 準拠を謳って実際に準拠試験を通している**実装で、
+ *     `prosemirror-markdown` が既に内部で使っている（＝**新しく増える実体は無い**。
+ *     transitive を明示宣言へ昇格させただけ）。
+ *   - **採らなかった案**: ①自作パーサ（上記のとおり実物で崩れる）
+ *     ②`marked` / `remark`（**ProseMirror への橋渡しを自分で書くことになり、
+ *     `prosemirror-markdown` の利点が消える**。`remark` は生態系が大きく捨てにくい）
+ *     ③Tiptap のサードパーティ md 拡張（**保守主体が個人で、
+ *     Tiptap 本体のメジャー更新に追随する保証が無い**）。
+ * - **③どう捨てるか**: **このファイルを消し、`App.vue` の md ボタンと
+ *   `editor.ts` の `clipboardTextParser` の 3 箇所を外すだけ。**
+ *   `doc` が真実なので**保存済みデータは 1 件も移行が要らない**。
+ *
  * ⚠ `partRef` を含む md の往復は **P3 の責務**。P1 が扱うのは手書き本文だけ。
  *    書き出しでは参照ノードを **黙って捨てない**（下記 partRef のシリアライザを参照）。
  */

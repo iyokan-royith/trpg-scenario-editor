@@ -11,7 +11,12 @@ import { flattenOutline, type OutlineItem } from '../document/outline'
 const props = defineProps<{ items: OutlineItem[] }>()
 
 const emit = defineEmits<{
-  (e: '移動', payload: { from: number; to: number }): void
+  /**
+   * 「掴んだ項目を、落とした先の項目の場所へ」。
+   * ⚠ ここは doc の挿入位置を計算しない（それは document 層の仕事）。
+   *   このペインが知っているのは「どれを、どれの所へ落としたか」だけ。
+   */
+  (e: '移動', payload: { 掴んだ: number; 落とした先: number }): void
   (e: '階層変更', payload: { pos: number; level: number }): void
   (e: '選択', pos: number): void
 }>()
@@ -24,10 +29,10 @@ function つかむ(item: OutlineItem) {
 }
 
 function 落とす(item: OutlineItem) {
-  const from = つかんでいる位置.value
+  const 掴んだ = つかんでいる位置.value
   つかんでいる位置.value = null
-  if (from === null || from === item.pos) return
-  emit('移動', { from, to: item.pos })
+  if (掴んだ === null || 掴んだ === item.pos) return
+  emit('移動', { 掴んだ, 落とした先: item.pos })
 }
 </script>
 

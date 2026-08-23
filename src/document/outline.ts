@@ -43,21 +43,39 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
   const index = new Map(parts.map((p) => [partKeyOf(p.instanceId, p.partId), p]))
 
   const roots: OutlineItem[] = []
-  /** 直前までの祖先。level の昇順で積む */
-  const stack: OutlineItem[] = []
+  /**
+   * 直前までの祖先。level の昇順で積む。
+   *
+   * ⚠⚠ **ここに積んでよいのは見出しだけ。** パート参照を積むと、
+   *   次のパート参照が「直前のパート参照」を親だと思い込み、深さが階段になる。
+   *   同じ見出しの下に独立章パートを N 件並べる形（DESIGN 1-6-5 の
+   *   「配列 1 件ごとに独立章を生む」宣言が作る形）が、まさにこれである。
+   */
+  const 見出しの祖先: OutlineItem[] = []
 
-  const push = (item: OutlineItem) => {
-    while (stack.length > 0 && stack[stack.length - 1]!.level >= item.level) stack.pop()
-    const parent = stack[stack.length - 1]
+  /** 現在の親（＝直前の見出し）に item をぶら下げる。 */
+  const ぶら下げる = (item: OutlineItem) => {
+    const parent = 見出しの祖先[見出しの祖先.length - 1]
     if (parent) parent.children.push(item)
     else roots.push(item)
-    stack.push(item)
   }
 
   doc.forEach((node, offset) => {
     if (node.type.name === 'heading') {
       const level = Number(node.attrs.level) || 1
-      push({ kind: '見出し', level, title: node.textContent, pos: offset, children: [] })
+      // 同レベル以上の見出しまで巻き戻してから、自分をぶら下げて祖先になる。
+      while (見出しの祖先.length > 0 && 見出しの祖先[見出しの祖先.length - 1]!.level >= level) {
+        見出しの祖先.pop()
+      }
+      const item: OutlineItem = {
+        kind: '見出し',
+        level,
+        title: node.textContent,
+        pos: offset,
+        children: [],
+      }
+      ぶら下げる(item)
+      見出しの祖先.push(item)
       return
     }
     if (node.type.name !== PART_REF_NODE) return
@@ -68,9 +86,11 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
     // ⭐ 深さは「何を置いたか」ではなく「どこに置いたか」の属性（DESIGN 1-6-3）。
     //    同じパートを 2 箇所に置いたとき（S7-3）、両者が別の深さになれるのはこの向きだから。
     //    ⚠ 明示的な深さ指定 UI は P2（配置 UI）の責務。ここでは囲っている見出しの 1 つ下に置く。
-    const enclosing = stack[stack.length - 1]
+    // ⚠ **祖先には積まない。** 積むと次のパート参照の親になってしまい、
+    //   「どこに置いたか」ではなく「何番目に置いたか」で深さが決まってしまう。
+    const enclosing = 見出しの祖先[見出しの祖先.length - 1]
     const level = Math.min((enclosing?.level ?? 0) + 1, MAX_LEVEL)
-    push({ kind: 'パート参照', level, title: part.title, pos: offset, children: [] })
+    ぶら下げる({ kind: 'パート参照', level, title: part.title, pos: offset, children: [] })
   })
 
   return roots
