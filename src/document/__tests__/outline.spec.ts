@@ -8,13 +8,13 @@ import { Editor } from '@tiptap/vue-3'
 import { documentExtensions } from '../schema'
 import { 見出し記号, 記号の長さ } from '../heading'
 import { outline, flattenOutline } from '../outline'
-import { PART_REF_NODE } from '../../p0/partRefExtension'
+import { PART_REF_NODE } from '../partRefExtension'
 import {
   derivePartsOf,
   type Part,
   type TemplateDefinition,
   type TemplateInstance,
-} from '../../p0/model'
+} from '../../template/model'
 
 const 定義: TemplateDefinition = {
   id: 'ぶんぼうぐ',

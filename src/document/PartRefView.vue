@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
-import { usePartStore } from './partStore'
+import { usePartStore } from '../store/partStore'
 
 const props = defineProps(nodeViewProps)
 const store = usePartStore()

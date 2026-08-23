@@ -1,6 +1,6 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { collectPlacedRefs, type PlacedRef } from './partRefExtension'
-import { partKeyOf, type Part } from './model'
+import { partKeyOf, type Part } from '../template/model'
 
 export interface PlacementReport {
   /** まだ本文のどこにも置かれていないパート（S7-1: 数字だけ常時見せる） */

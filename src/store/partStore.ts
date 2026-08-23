@@ -6,7 +6,7 @@ import {
   type Part,
   type TemplateDefinition,
   type TemplateInstance,
-} from './model'
+} from '../template/model'
 
 /**
  * テンプレ定義とインスタンスの置き場。

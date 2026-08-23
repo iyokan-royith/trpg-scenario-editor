@@ -19,9 +19,9 @@ import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { PartRef, PART_REF_NODE, collectPlacedRefs } from '../partRefExtension'
-import { usePartStore } from '../partStore'
+import { usePartStore } from '../../store/partStore'
 import { analyzePlacement } from '../placement'
-import type { TemplateDefinition, TemplateInstance } from '../model'
+import type { TemplateDefinition, TemplateInstance } from '../../template/model'
 
 const 定義: TemplateDefinition = {
   id: 'みほん',

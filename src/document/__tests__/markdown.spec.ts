@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest'
 import { documentSchema } from '../schema'
 import { docToMd, markdownSlice, mdToDoc } from '../markdown'
 import { 見出しの題名, 見出しレベル } from '../heading'
-import { PART_REF_NODE } from '../../p0/partRefExtension'
+import { PART_REF_NODE } from '../partRefExtension'
 
 const みほんのmd = [
   '# あかしょう',

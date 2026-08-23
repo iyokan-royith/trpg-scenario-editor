@@ -13,7 +13,7 @@ import { docToMd, mdToDoc } from './document/markdown'
 import { 保存内容の記号を補う } from './document/heading'
 import { documentSchema } from './document/schema'
 import OutlinePane from './ui/OutlinePane.vue'
-import { usePartStore } from './p0/partStore'
+import { usePartStore } from './store/partStore'
 import { createAutoSaver, loadDocument } from './store/persistence'
 
 /**

@@ -1,7 +1,7 @@
 import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import type { Schema } from '@tiptap/pm/model'
-import { PartRef } from '../p0/partRefExtension'
+import { PartRef } from './partRefExtension'
 import { HeadingSync, SourceHeading } from './headingSource'
 import { CurrentBlock } from './currentBlock'
 

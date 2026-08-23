@@ -1,6 +1,6 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { PART_REF_NODE } from '../p0/partRefExtension'
-import { partKeyOf, type Part } from '../p0/model'
+import { PART_REF_NODE } from './partRefExtension'
+import { partKeyOf, type Part } from '../template/model'
 import { 見出しの題名, 見出しレベル } from './heading'
 
 /** 左ペインに出る 1 項目。⚠ これは **導出値** であり、保存しない（DESIGN 1-2）。 */

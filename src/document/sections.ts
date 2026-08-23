@@ -1,6 +1,6 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
-import { PART_REF_NODE } from '../p0/partRefExtension'
+import { PART_REF_NODE } from './partRefExtension'
 import { 最大レベル, 最小レベル, 見出し記号, 見出しレベル, 記号の長さ } from './heading'
 
 /**
