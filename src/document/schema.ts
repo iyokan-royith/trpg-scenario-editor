@@ -1,7 +1,7 @@
 import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import type { Schema } from '@tiptap/pm/model'
-import { PartRef } from './partRefExtension'
+import { PartRef, PartRefInline } from './partRefExtension'
 import { HeadingSync, SourceHeading } from './headingSource'
 import { CurrentBlock } from './currentBlock'
 
@@ -23,6 +23,8 @@ export const documentExtensions = [
   CurrentBlock,
   // P0 で実証済みのパート参照ノード。P1 では「本文に居ても壊れない」ことだけを担保する。
   PartRef,
+  // 段落の中に置ける版（P2・DESIGN 1-6-3）。⚠ block 版と**併存**する（置き換えではない）。
+  PartRefInline,
 ]
 
 /**

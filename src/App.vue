@@ -13,8 +13,18 @@ import { docToMd, mdToDoc } from './document/markdown'
 import { 保存内容の記号を補う } from './document/heading'
 import { documentSchema } from './document/schema'
 import OutlinePane from './ui/OutlinePane.vue'
+import MaterialPane from './ui/MaterialPane.vue'
 import { usePartStore } from './store/partStore'
-import { createAutoSaver, loadDocument } from './store/persistence'
+import {
+  createAutoSaver,
+  deleteInstance,
+  loadDocument,
+  loadInstances,
+  saveInstance,
+} from './store/persistence'
+import { analyzePlacement } from './document/placement'
+import { collectPlacedRefs, PART_REF_INLINE_NODE, PART_REF_NODE } from './document/partRefExtension'
+import { partKeyOf, type Part } from './template/model'
 
 /**
  * v0 の画面。左に見出しツリー、右に 1 枚の連続文書（CONCEPT Q5）。
@@ -35,6 +45,22 @@ const 見出しツリー = computed(() => {
   return doc ? outline(doc, store.parts) : []
 })
 
+/**
+ * 配置の突き合わせ（DESIGN 1-5）。⚠ 「配置済みフラグ」をデータ側に持たせない。
+ * 本文とパートの現状から**毎回**求める。
+ */
+const 配置 = computed(() => {
+  void 版.value
+  const doc = editor.value?.state.doc
+  return doc
+    ? analyzePlacement(doc, store.parts)
+    : { unplaced: [], dangling: [], duplicated: [] as string[] }
+})
+
+const 未配置キー = computed(() => 配置.value.unplaced.map((p) => partKeyOf(p.instanceId, p.partId)))
+
+const 画像を選ぶ口 = ref<HTMLInputElement | null>(null)
+
 const saver = createAutoSaver({
   getDoc: () => editor.value?.getJSON() ?? { type: 'doc', content: [] },
   onError: (error) => {
@@ -43,6 +69,23 @@ const saver = createAutoSaver({
 })
 
 onMounted(async () => {
+  // ⚠ 同梱テンプレも、ユーザーが持ち込む定義とまったく同じ経路（loader.ts）で読む（Q6）。
+  //   壊れていれば例外が飛ぶので、黙って「テンプレが 0 件の画面」にはならない。
+  try {
+    store.同梱テンプレを登録する()
+  } catch (error) {
+    しらせ.value = `同梱テンプレートを読めませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
+  try {
+    for (const instance of await loadInstances()) store.upsertInstance(instance)
+  } catch (error) {
+    しらせ.value = `素材を読み出せませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
+
   let 初期内容: object | undefined
   try {
     const 保存されていたもの = (await loadDocument())?.doc
@@ -166,6 +209,79 @@ function 選択(pos: number) {
   editor.value?.commands.focus(pos + 1)
 }
 
+/** 「素材を追加」→ ファイルを選ぶ口を開く。⚠ 利用者にテンプレートの存在を見せない（1-7-2）。 */
+function 画像を追加() {
+  画像を選ぶ口.value?.click()
+}
+
+async function 画像が選ばれた(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // ⚠ 同じファイルを続けて選べるように、値は毎回捨てる（change が飛ばなくなる）。
+  input.value = ''
+  if (!file) return
+  const instance = store.画像を追加する(file, file.name)
+  try {
+    await saveInstance(instance)
+    しらせ.value = ''
+  } catch (error) {
+    しらせ.value = `素材を保存できませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
+}
+
+/**
+ * 素材を本文へ挿す。
+ * ⚠ どのノードで置くかは **パートの形態**が決める（1-7-3）。
+ *   `本文中`（画像はこれ）は段落の中に置ける inline 版、`独立章` はブロック版。
+ *   「単独の行にしたい」は**空の段落へ置く**ことで表す＝配置の側の話であって、
+ *   パートの側で形を変える話ではない。
+ */
+function 素材を挿入(part: Part) {
+  const ed = editor.value
+  if (!ed) return
+  const type = part.form === '独立章' ? PART_REF_NODE : PART_REF_INLINE_NODE
+  // ⚠ `scrollIntoView: false` は意図的。挿し込むのは**利用者が直前に居た位置**なので、
+  //   そこへ自動スクロールし直す必要が無い（画面が跳ねる方が邪魔になる）。
+  ed.chain()
+    .focus(undefined, { scrollIntoView: false })
+    .insertContent({ type, attrs: { instanceId: part.instanceId, partId: part.partId } })
+    .run()
+}
+
+/**
+ * 素材を消す。
+ * ⚠⚠ **消す前に「本文に何箇所置かれているか」を数えて知らせる**（S7-2・完了条件 #4）。
+ *   消した後では表示名がストアから消えていて、「何が行方不明になったか」を言えない。
+ *   本文側の参照は**残す**（勝手に本文を書き換えない）。残った参照は「行方不明のパート」として見える。
+ */
+async function 素材を削除(part: Part) {
+  const 置かれた数 = 置かれている数(part)
+  store.removeInstance(part.instanceId)
+  版.value += 1
+  しらせ.value =
+    置かれた数 > 0
+      ? `「${part.title}」を消しました。本文に ${置かれた数} 箇所、行方不明の参照が残っています`
+      : `「${part.title}」を消しました`
+  try {
+    await deleteInstance(part.instanceId)
+  } catch (error) {
+    しらせ.value = `素材を消せませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
+}
+
+/** そのパートが本文に何箇所置かれているか。⚠ 走査は document 層の 1 本を使う（数え方を増やさない）。 */
+function 置かれている数(part: Part): number {
+  const doc = editor.value?.state.doc
+  if (!doc) return 0
+  const key = partKeyOf(part.instanceId, part.partId)
+  return collectPlacedRefs(doc).filter((ref) => partKeyOf(ref.instanceId, ref.partId) === key)
+    .length
+}
+
 function md書き出し() {
   const doc = editor.value?.state.doc
   if (!doc) return
@@ -212,7 +328,24 @@ function md読み込み() {
       <main class="app__editor">
         <EditorContent v-if="editor" :editor="editor" />
       </main>
+      <MaterialPane
+        class="app__materials"
+        :parts="store.parts"
+        :未配置キー="未配置キー"
+        @画像を追加="画像を追加"
+        @挿入="素材を挿入"
+        @削除="素材を削除"
+      />
     </div>
+    <!-- ⚠ 見えない口。「素材を追加」のボタンから開く（1-7-2: テンプレートの存在は見せない） -->
+    <input
+      ref="画像を選ぶ口"
+      class="app__file"
+      type="file"
+      accept="image/*"
+      aria-label="画像を選ぶ"
+      @change="画像が選ばれた"
+    />
     <section v-if="mdを開いている" class="app__md">
       <label for="md">md（書き出した内容。直してから読み込めます）</label>
       <textarea id="md" v-model="md" rows="10"></textarea>
@@ -252,6 +385,13 @@ function md読み込み() {
 .app__outline {
   width: 16rem;
   border-right: 1px solid #ddd;
+}
+.app__materials {
+  width: 18rem;
+  border-left: 1px solid #ddd;
+}
+.app__file {
+  display: none;
 }
 .app__editor {
   flex: 1;

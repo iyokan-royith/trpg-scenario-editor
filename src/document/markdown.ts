@@ -1,9 +1,9 @@
 import MarkdownIt from 'markdown-it'
 import { MarkdownParser, MarkdownSerializer } from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
-import { Fragment, Slice } from '@tiptap/pm/model'
+import { Slice } from '@tiptap/pm/model'
 import { documentSchema } from './schema'
-import { 見出しレベル, 記号を補う, 記号の長さ } from './heading'
+import { 記号を補う, 記号の長さ } from './heading'
 
 /**
  * md の入出力。
@@ -174,6 +174,14 @@ export const markdownSerializer = new MarkdownSerializer(
     partRef(state, node) {
       state.write(`<!-- partRef ${node.attrs.instanceId} ${node.attrs.partId} -->`)
       state.closeBlock(node)
+    },
+    /**
+     * ⚠ inline 版も同じ理由で **黙って消さない**。
+     *   ⚠ `state.text(..., false)` にするのは、`<!-- -->` の記号を md にエスケープさせないため
+     *   （`state.write` はブロックの行頭に書く関数なので、文の途中には使えない）。
+     */
+    partRefInline(state, node) {
+      state.text(`<!-- partRef ${node.attrs.instanceId} ${node.attrs.partId} -->`, false)
     },
   },
   {

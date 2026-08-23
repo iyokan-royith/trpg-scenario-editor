@@ -1,5 +1,5 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { PART_REF_NODE } from './partRefExtension'
+import { PART_REF_INLINE_NODE, PART_REF_NODE } from './partRefExtension'
 import { partKeyOf, type Part } from '../template/model'
 import { 見出しの題名, 見出しレベル } from './heading'
 
@@ -65,6 +65,25 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
     else roots.push(item)
   }
 
+  /**
+   * 参照ノード 1 個をツリーに置く（置くべきものなら）。
+   * ⚠ block 版と inline 版で**扱いを分けない**。分けると、同じ `独立章` のパートが
+   *   置いた形態によってツリーに出たり出なかったりする。
+   */
+  const 参照を置く = (node: PMNode, pos: number) => {
+    const part = index.get(partKeyOf(String(node.attrs.instanceId), String(node.attrs.partId)))
+    if (!part || part.form !== '独立章') return
+
+    // ⭐ 深さは「何を置いたか」ではなく「どこに置いたか」の属性（DESIGN 1-6-3）。
+    //    同じパートを 2 箇所に置いたとき（S7-3）、両者が別の深さになれるのはこの向きだから。
+    //    ⚠ 明示的な深さ指定 UI は P2（配置 UI）の責務。ここでは囲っている見出しの 1 つ下に置く。
+    // ⚠ **祖先には積まない。** 積むと次のパート参照の親になってしまい、
+    //   「どこに置いたか」ではなく「何番目に置いたか」で深さが決まってしまう。
+    const enclosing = 見出しの祖先[見出しの祖先.length - 1]
+    const level = Math.min((enclosing?.level ?? 0) + 1, MAX_LEVEL)
+    ぶら下げる({ kind: 'パート参照', level, title: part.title, pos, children: [] })
+  }
+
   doc.forEach((node, offset) => {
     // ⭐ レベルも題名も **本文のテキストから導出する**（`attrs.level` は読まない）。
     //   CONCEPT Q2 改訂で記号が本文に残るようになり、真実がテキスト側へ移ったため。
@@ -84,21 +103,20 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
       }
       ぶら下げる(item)
       見出しの祖先.push(item)
+      // ⚠ return しない。見出しの中にも inline 参照は置けるので、下の走査へ落とす。
+    } else if (node.type.name === PART_REF_NODE) {
+      参照を置く(node, offset)
       return
     }
-    if (node.type.name !== PART_REF_NODE) return
 
-    const part = index.get(partKeyOf(String(node.attrs.instanceId), String(node.attrs.partId)))
-    if (!part || part.form !== '独立章') return
-
-    // ⭐ 深さは「何を置いたか」ではなく「どこに置いたか」の属性（DESIGN 1-6-3）。
-    //    同じパートを 2 箇所に置いたとき（S7-3）、両者が別の深さになれるのはこの向きだから。
-    //    ⚠ 明示的な深さ指定 UI は P2（配置 UI）の責務。ここでは囲っている見出しの 1 つ下に置く。
-    // ⚠ **祖先には積まない。** 積むと次のパート参照の親になってしまい、
-    //   「どこに置いたか」ではなく「何番目に置いたか」で深さが決まってしまう。
-    const enclosing = 見出しの祖先[見出しの祖先.length - 1]
-    const level = Math.min((enclosing?.level ?? 0) + 1, MAX_LEVEL)
-    ぶら下げる({ kind: 'パート参照', level, title: part.title, pos: offset, children: [] })
+    // ⚠ inline 版の参照は**段落の中**に居るので、doc の直下を見るだけでは 1 個も見つからない
+    //   （DESIGN 1-6-3・1-7-3）。ここを足さないと、独立章のパートを文中に置いた場合だけ
+    //   ツリーから黙って消える。
+    node.descendants((child, childPos) => {
+      if (child.type.name !== PART_REF_INLINE_NODE) return
+      // childPos は node の内容の先頭からの相対位置。+1 は node 自身の開きタグ分。
+      参照を置く(child, offset + 1 + childPos)
+    })
   })
 
   return roots
