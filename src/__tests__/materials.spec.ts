@@ -26,6 +26,7 @@ import {
   saveInstance,
 } from '../store/persistence'
 import { collectPlacedRefs, PART_REF_INLINE_NODE } from '../document/partRefExtension'
+import type { TemplateInstance } from '../template/model'
 
 /** jsdom には object URL が無いので、生成と解放を数えられる形で置き換える。 */
 let 作ったURL: string[] = []
@@ -84,6 +85,22 @@ async function 画像を選ぶ(file: File) {
   await nextTick()
 }
 
+/**
+ * 保存が届くまで待つ。
+ * ⚠ 画像の保存は「change ハンドラ → `blob.arrayBuffer()` → IndexedDB のイベント」と
+ *   **マクロタスクを2段またぐ**ので、`flushPromises()` 1 周では終わらない。
+ *   固定時間の待ちにすると遅い機械で落ちるので、条件が満たされるまで回す。
+ */
+async function 保存が届くまで(判定: (list: TemplateInstance[]) => boolean | Promise<boolean>) {
+  for (let i = 0; i < 50; i += 1) {
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const list = await loadInstances()
+    if (await 判定(list)) return list
+  }
+  throw new Error('保存が届きませんでした')
+}
+
 function 素材の行() {
   return wrapper.findAll('.materials__item')
 }
@@ -123,8 +140,7 @@ describe('#1 「素材を追加 → 画像を選ぶ」で素材一覧に出る',
     await 起動()
     await 画像を選ぶ(画像ファイル('ねこ.png', [7, 7]))
 
-    const 保存されたもの = await loadInstances()
-    expect(保存されたもの).toHaveLength(1)
+    const 保存されたもの = await 保存が届くまで((list) => list.length === 1)
     expect(保存されたもの[0]!.templateId).toBe(画像テンプレID)
     expect([...new Uint8Array(await 保存されたもの[0]!.images.画像!.arrayBuffer())]).toEqual([7, 7])
   })
@@ -194,12 +210,12 @@ describe('#2 本文の任意の位置に差し込める', () => {
 })
 
 describe('#3 同じ画像を 2 箇所に置ける。差し替えると両方変わる', () => {
-  it('2 箇所とも同じ画像を指し、差し替えで両方の src が入れ替わる', async () => {
+  it('画面の「差し替え」で、置かれた 2 箇所とも入れ替わり、保存にも反映される', async () => {
     await 起動()
     await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
-    const 挿入ボタン = () => 素材の行()[0]!.findAll('button')[0]!
-    await 挿入ボタン().trigger('click')
-    await 挿入ボタン().trigger('click')
+    const ボタン = () => 素材の行()[0]!.findAll('button')
+    await ボタン()[0]!.trigger('click') // 本文へ挿入
+    await ボタン()[0]!.trigger('click') // もう 1 箇所（S7-3: 2 箇所配置は正常）
     await nextTick()
 
     const 画像たち = () => wrapper.findAll('.part-ref__image')
@@ -210,19 +226,41 @@ describe('#3 同じ画像を 2 箇所に置ける。差し替えると両方変�
     expect(まえ.every((src) => Boolean(src))).toBe(true)
     expect(作ったURL).toHaveLength(2)
 
-    // データ側を差し替える（本文には一切触らない）
-    const store = usePartStore()
-    const id = Object.keys(store.instances)[0]!
-    store.画像を差し替える(id, new Blob([new Uint8Array([9, 9])], { type: 'image/png' }))
-    await nextTick()
+    // ⭐ 利用者の操作で差し替える（本文には一度も触らない）
+    await ボタン()[1]!.trigger('click') // 「差し替え」
+    await 画像を選ぶ(画像ファイル('いぬ.png', [9, 9]))
 
     const あと = 画像たち().map((v) => v.attributes('src'))
     expect(あと).toHaveLength(2)
-    // ⭐ 2 箇所とも新しい実体を指し直している（本文には一度も触っていない）
+    // ⭐ 2 箇所とも新しい実体を指し直している
     expect(あと[0]).not.toBe(まえ[0])
     expect(あと[1]).not.toBe(まえ[1])
     // ⚠ 古い object URL は捨てる（放っておくとページの寿命まで Blob が残る）
     expect(解放したURL).toEqual(expect.arrayContaining(まえ as string[]))
+
+    // ⚠⚠ 保存まで届いていること。ここが抜けると**画面では差し替わったのにリロードで戻る**
+    const 保存されたもの = await 保存が届くまで(async (list) => {
+      const blob = list[0]?.images.画像
+      return blob ? (await blob.arrayBuffer()).byteLength === 2 : false
+    })
+    expect(保存されたもの).toHaveLength(1)
+    expect([...new Uint8Array(await 保存されたもの[0]!.images.画像!.arrayBuffer())]).toEqual([9, 9])
+    // 表示名は差し替えでは変えない（本文中の呼び名が黙って変わらない）
+    expect(保存されたもの[0]!.data.表示名).toBe('ねこ.png')
+  })
+
+  it('差し替えは本文に触らない（参照の数も位置も変わらない）', async () => {
+    await 起動()
+    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
+    const ボタン = () => 素材の行()[0]!.findAll('button')
+    await ボタン()[0]!.trigger('click')
+    await nextTick()
+    const まえの本文 = JSON.stringify(本体().getJSON())
+
+    await ボタン()[1]!.trigger('click')
+    await 画像を選ぶ(画像ファイル('いぬ.png', [9]))
+
+    expect(JSON.stringify(本体().getJSON())).toBe(まえの本文)
   })
 })
 
@@ -235,7 +273,7 @@ describe('#4 インスタンスを消すと、置かれていた参照につい�
     await ボタン()[0]!.trigger('click') // もう 1 箇所
     await nextTick()
 
-    await ボタン()[1]!.trigger('click') // 「消す」
+    await ボタン()[2]!.trigger('click') // 「消す」
     await flushPromises()
     await nextTick()
 

@@ -18,6 +18,7 @@ import {
   saveDocument,
   saveInstance,
 } from '../persistence'
+import { reactive } from 'vue'
 import type { TemplateInstance } from '../../template/model'
 
 const 旧版の本文 = {
@@ -104,6 +105,22 @@ describe('素材の保存', () => {
     await deleteInstance('そざい1')
 
     expect((await loadInstances()).map((i) => i.id)).toEqual(['そざい2'])
+  })
+
+  /**
+   * ⚠⚠ ストアから取り出したインスタンスは Vue の Proxy である。
+   *   これをそのまま IndexedDB へ渡すと `DataCloneError` で落ちる。
+   *   ⚠ 意地の悪いことに、**追加の経路は素のオブジェクトを返すので通り、
+   *   差し替えの経路だけが落ちる**——同じ関数を呼んでいるのに、片方だけが壊れる。
+   *   （実装中に実際に踏んだ。画面では差し替わったのに保存だけ届いていなかった）
+   */
+  it('リアクティブなインスタンスを渡しても保存できる（Proxy のまま書き込まない）', async () => {
+    const 素材 = reactive(画像素材('そざい1', 'ねこの写真', [5, 5]))
+    await saveInstance(素材 as TemplateInstance)
+
+    const 読み戻し = await loadInstances()
+    expect(読み戻し).toHaveLength(1)
+    expect([...new Uint8Array(await 読み戻し[0]!.images.画像!.arrayBuffer())]).toEqual([5, 5])
   })
 
   it('本文の保存とは別のストアなので、互いを消さない', async () => {

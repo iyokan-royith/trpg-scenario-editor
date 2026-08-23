@@ -89,11 +89,17 @@ export const usePartStore = defineStore('parts', () => {
     return instance
   }
 
-  /** 画像フィールドを差し替える（同じインスタンスなので、置かれた全箇所が同時に変わる）。 */
-  function 画像を差し替える(instanceId: string, file: Blob) {
+  /**
+   * 画像フィールドを差し替える（同じインスタンスなので、置かれた全箇所が同時に変わる）。
+   * ⚠ **保存はしない。** 呼び手が返り値を `saveInstance()` へ渡すこと
+   *   （保存の責務をストアへ持ち込むと、テストのたびに IndexedDB が要る）。
+   * @returns 差し替え後のインスタンス。対象が無ければ undefined
+   */
+  function 画像を差し替える(instanceId: string, file: Blob): TemplateInstance | undefined {
     const instance = instances.value[instanceId]
-    if (!instance) return
+    if (!instance) return undefined
     instance.images = { ...instance.images, [画像キー]: file }
+    return instance
   }
 
   return {
