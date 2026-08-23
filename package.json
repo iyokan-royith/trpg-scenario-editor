@@ -19,12 +19,15 @@
     "@tiptap/pm": "^3.30.2",
     "@tiptap/starter-kit": "^3.30.2",
     "@tiptap/vue-3": "^3.30.2",
+    "markdown-it": "^14.3.0",
     "pinia": "^4.0.2",
+    "prosemirror-markdown": "^1.13.6",
     "vue": "^3.5.40"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
     "@types/jsdom": "^28.0.3",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/eslint-plugin": "^1.6.23",
@@ -35,6 +38,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-oxlint": "~1.79.0",
     "eslint-plugin-vue": "~10.9.2",
+    "fake-indexeddb": "^6.2.5",
     "jiti": "^2.7.0",
     "jsdom": "^29.1.1",
     "npm-run-all2": "^9.0.2",
