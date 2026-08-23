@@ -8,6 +8,7 @@
  *    ラッパライブラリを入れる理由が無い（捨てるときはこのファイルを消すだけ）。
  */
 
+import { toRaw } from 'vue'
 import type { TemplateInstance } from '../template/model'
 
 const DB_NAME = 'trpg-scenario-editor'
@@ -123,14 +124,20 @@ interface StoredInstance {
 }
 
 export async function saveInstance(instance: TemplateInstance): Promise<void> {
+  // ⚠⚠ **必ず生の値に戻してから渡す。** ストアから取り出したインスタンスは Vue の Proxy で、
+  //   そのまま `put()` すると **`DataCloneError: #<Object> could not be cloned`** で落ちる
+  //   （構造化複製は Proxy を知らない）。⚠ 落ち方が意地悪で、**追加の経路は素のオブジェクトを
+  //   返すので通り、差し替えの経路だけが落ちる**——どちらも同じ関数を呼んでいるのに。
+  //   → 呼び手に「生で渡してください」と要求せず、**受け側で 1 回戻す**。
+  const 生 = toRaw(instance)
   const images: StoredInstance['images'] = {}
-  for (const [key, blob] of Object.entries(instance.images)) {
+  for (const [key, blob] of Object.entries(toRaw(生.images))) {
     images[key] = { bytes: await blob.arrayBuffer(), type: blob.type }
   }
   const record: StoredInstance = {
-    id: instance.id,
-    templateId: instance.templateId,
-    data: instance.data,
+    id: 生.id,
+    templateId: 生.templateId,
+    data: toRaw(生.data),
     images,
   }
   await withStore(

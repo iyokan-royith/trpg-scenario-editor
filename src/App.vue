@@ -60,6 +60,11 @@ const 配置 = computed(() => {
 const 未配置キー = computed(() => 配置.value.unplaced.map((p) => partKeyOf(p.instanceId, p.partId)))
 
 const 画像を選ぶ口 = ref<HTMLInputElement | null>(null)
+/**
+ * ファイルを選び終えたときに「追加」なのか「差し替え」なのかを覚えておく口。
+ * ⚠ 追加のときは必ず null に戻す（戻さないと、次の「素材を追加」が差し替えになる）。
+ */
+const 差し替え対象 = ref<string | null>(null)
 
 const saver = createAutoSaver({
   getDoc: () => editor.value?.getJSON() ?? { type: 'doc', content: [] },
@@ -211,6 +216,17 @@ function 選択(pos: number) {
 
 /** 「素材を追加」→ ファイルを選ぶ口を開く。⚠ 利用者にテンプレートの存在を見せない（1-7-2）。 */
 function 画像を追加() {
+  差し替え対象.value = null
+  画像を選ぶ口.value?.click()
+}
+
+/**
+ * 「差し替え」→ 同じ口を開く。
+ * ⚠ **本文には一切触らない。** データ側を入れ替えるだけで、置かれている全箇所が同時に変わる
+ *   （本文は参照しか持たないので、これが自動的に成り立つ・S7-3）。
+ */
+function 素材を差し替え(part: Part) {
+  差し替え対象.value = part.instanceId
   画像を選ぶ口.value?.click()
 }
 
@@ -219,9 +235,21 @@ async function 画像が選ばれた(event: Event) {
   const file = input.files?.[0]
   // ⚠ 同じファイルを続けて選べるように、値は毎回捨てる（change が飛ばなくなる）。
   input.value = ''
+  const 差し替え先 = 差し替え対象.value
+  差し替え対象.value = null
   if (!file) return
-  const instance = store.画像を追加する(file, file.name)
+
+  const instance = 差し替え先
+    ? store.画像を差し替える(差し替え先, file)
+    : store.画像を追加する(file, file.name)
+  // 差し替え先が既に消えていた場合（一覧を開いたまま別経路で消した等）は何も残さない。
+  if (!instance) {
+    しらせ.value = 'その素材はもうありません'
+    return
+  }
   try {
+    // ⚠ 保存まで含めて 1 つの操作。ここを忘れると、画面では差し替わったのに
+    //   リロードで元に戻る（差し替えたつもりのものが黙って巻き戻る）。
     await saveInstance(instance)
     しらせ.value = ''
   } catch (error) {
@@ -334,6 +362,7 @@ function md読み込み() {
         :未配置キー="未配置キー"
         @画像を追加="画像を追加"
         @挿入="素材を挿入"
+        @差し替え="素材を差し替え"
         @削除="素材を削除"
       />
     </div>

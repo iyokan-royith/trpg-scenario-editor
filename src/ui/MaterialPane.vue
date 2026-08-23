@@ -22,6 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: '画像を追加'): void
   (e: '挿入', part: Part): void
+  (e: '差し替え', part: Part): void
   (e: '削除', part: Part): void
 }>()
 
@@ -61,6 +62,8 @@ const 表示する一覧 = computed(() => (未配置だけ.value ? props.parts.f
         <span class="materials__form">{{ part.form }}</span>
         <span class="materials__note">{{ インラインの文(part.body) }}</span>
         <button type="button" @click="emit('挿入', part)">本文へ挿入</button>
+        <!-- ⚠ 差し替えは**本文に触らない**。置かれている全箇所が同時に変わる（S7-3） -->
+        <button type="button" @click="emit('差し替え', part)">差し替え</button>
         <button type="button" @click="emit('削除', part)">消す</button>
       </li>
     </ul>
