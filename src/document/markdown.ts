@@ -3,7 +3,7 @@ import { MarkdownParser, MarkdownSerializer } from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { documentSchema } from './schema'
-import { 見出し記号, 見出しレベル, 記号の長さ } from './heading'
+import { 見出しレベル, 記号を補う, 記号の長さ } from './heading'
 
 /**
  * md の入出力。
@@ -123,15 +123,13 @@ export const markdownSerializer = new MarkdownSerializer(
      */
     heading(state, node) {
       const text = node.textContent
-      const level = 見出しレベル(text)
-      if (level === null) {
-        // 記号を持たない見出し（外から来た JSON など）。記号を補って出す。
-        state.write(見出し記号(Number(node.attrs.level) || 1))
-        state.renderInline(node, false)
-      } else {
-        state.write(見出し記号(level))
-        state.renderInline(node.copy(node.content.cut(記号の長さ(text))), false)
-      }
+      const 長さ = 記号の長さ(text)
+      // ⚠ 記号が無い見出しはここへ来ない（docToMd の入口で `記号を補う` を通している）。
+      //   ⚠⚠ **ここで attrs から補う分岐を持たせない。** 以前それを持っていたせいで、
+      //   同じ doc に対して md だけが「見出しとして出す」と答え、ツリーと編集は別の答えを出していた。
+      //   記号が無い heading をどう解釈するかは `heading.ts` の 1 箇所だけが決める。
+      state.write(text.slice(0, 長さ))
+      state.renderInline(node.copy(node.content.cut(長さ)), false)
       state.closeBlock(node)
     },
     horizontalRule(state, node) {
@@ -198,40 +196,21 @@ export const markdownSerializer = new MarkdownSerializer(
 )
 
 /** md 文字列 → ドキュメント。 */
-/**
- * 解釈し終えた doc の見出しに、**記号をテキストとして戻す**。
- *
- * ⚠ markdown-it は記号をトークンの種類（`heading_open` の tag）に畳んでしまうので、
- *   パーサの表だけでは記号を本文に残せない。**解釈のあとで戻すのがいちばん素直**
- *   （パーサに手を入れると、記号の規則が `heading.ts` と 2 箇所に散る）。
- */
-function 記号を本文に戻す(doc: PMNode, schema: Schema): PMNode {
-  const 見出し = schema.nodes.heading
-  if (!見出し) return doc
-
-  const blocks: PMNode[] = []
-  let 変えた = false
-  doc.forEach((node) => {
-    if (node.type !== 見出し || 見出しレベル(node.textContent) !== null) {
-      blocks.push(node)
-      return
-    }
-    const 記号 = schema.text(見出し記号(Number(node.attrs.level) || 1))
-    blocks.push(node.copy(Fragment.from(記号).append(node.content)))
-    変えた = true
-  })
-  return 変えた ? doc.copy(Fragment.fromArray(blocks)) : doc
-}
-
 export function mdToDoc(markdown: string, schema: Schema = documentSchema): PMNode {
   const doc = parserFor(schema).parse(markdown)
   if (!doc) throw new Error('md を解釈できませんでした')
-  return 記号を本文に戻す(doc, schema)
+  return 記号を補う(doc)
 }
 
-/** ドキュメント → md 文字列。 */
+/**
+ * ドキュメント → md 文字列。
+ *
+ * ⚠ 入口で記号を補う（`heading.ts` の不変条件）。
+ *   ここを通さないと、**外から渡された「記号の無い見出し」を md だけが見出しとして出し、
+ *   ツリーは落とす**という食い違いが復活する（3巡目監査の差し戻し）。
+ */
 export function docToMd(doc: PMNode): string {
-  return markdownSerializer.serialize(doc)
+  return markdownSerializer.serialize(記号を補う(doc))
 }
 
 /**

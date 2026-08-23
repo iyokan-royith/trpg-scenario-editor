@@ -10,6 +10,8 @@ import {
   階層を変えられるか,
 } from './document/sections'
 import { docToMd, mdToDoc } from './document/markdown'
+import { 保存内容の記号を補う } from './document/heading'
+import { documentSchema } from './document/schema'
 import OutlinePane from './ui/OutlinePane.vue'
 import { usePartStore } from './p0/partStore'
 import { createAutoSaver, loadDocument } from './store/persistence'
@@ -43,7 +45,15 @@ const saver = createAutoSaver({
 onMounted(async () => {
   let 初期内容: object | undefined
   try {
-    初期内容 = ((await loadDocument())?.doc as object) ?? undefined
+    const 保存されていたもの = (await loadDocument())?.doc
+    // ⭐⭐ **入口で記号を補う**（`heading.ts` の不変条件）。
+    //   旧版（記号を消す方式）が保存した doc には記号の無い見出しが入っており、
+    //   そのまま開くと **左ペインから消え、1 文字打った瞬間に段落へ降格して自動保存で確定する**
+    //   ＝ロイスの書いたものが黙って失われる（3巡目監査が実アプリ経路で実測）。
+    初期内容 =
+      保存されていたもの === undefined
+        ? undefined
+        : (保存内容の記号を補う(保存されていたもの, documentSchema) as object)
   } catch (error) {
     しらせ.value = `前回の内容を読み出せませんでした: ${
       error instanceof Error ? error.message : String(error)

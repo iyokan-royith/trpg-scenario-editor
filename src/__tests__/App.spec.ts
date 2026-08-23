@@ -440,3 +440,67 @@ describe('要望4: 「これ以上は変えられません」が出るタイミ�
     wrapper.unmount()
   })
 })
+
+/**
+ * ⚠⚠ 3巡目監査の差し戻し（2026-08-23）。
+ *   旧版（記号を消す方式）が保存した doc をロイスのブラウザが持っている可能性が高く、
+ *   新版で開いた瞬間に **見出しが消えて自動保存で確定する**経路が実在した。
+ */
+describe('旧版形式の doc を開いても、見出しが失われない', () => {
+  /** 記号が本文に無く、レベルが attrs にしかない＝旧版が保存していた形。 */
+  const 旧版の内容 = {
+    type: 'doc',
+    content: [
+      { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'まえがき' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'ほんぶんです' }] },
+      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'そのいち' }] },
+    ],
+  }
+
+  it('⭐ 左ペインに見出しが出る（以前は「見出しはまだありません」だった）', async () => {
+    await saveDocument(旧版の内容)
+    const wrapper = await 起動()
+    const pane = wrapper.findComponent({ name: 'OutlinePane' })
+    expect(pane.text()).toContain('まえがき')
+    expect(pane.text()).toContain('そのいち')
+    wrapper.unmount()
+  })
+
+  it('⭐ 記号が本文に補われている（編集できる形で見えている）', async () => {
+    await saveDocument(旧版の内容)
+    const wrapper = await 起動()
+    expect(本体(wrapper).state.doc.child(0).textContent).toBe('# まえがき')
+    expect(本体(wrapper).state.doc.child(2).textContent).toBe('## そのいち')
+    wrapper.unmount()
+  })
+
+  it('⭐⭐ 1 文字打っても見出しのまま（以前はここで全ブロックが段落へ降格した）', async () => {
+    await saveDocument(旧版の内容)
+    const wrapper = await 起動()
+    const editor = 本体(wrapper)
+    editor.view.dispatch(editor.state.tr.insertText('。', editor.state.doc.content.size - 1))
+    await nextTick()
+
+    const 種類: string[] = []
+    editor.state.doc.forEach((n) => 種類.push(n.type.name))
+    expect(種類.slice(0, 3)).toEqual(['heading', 'paragraph', 'heading'])
+    expect(wrapper.findComponent({ name: 'OutlinePane' }).text()).toContain('まえがき')
+    wrapper.unmount()
+  })
+
+  it('⭐ 打った後に自動保存されても、見出しが残ったまま確定する', async () => {
+    await saveDocument(旧版の内容)
+    const wrapper = await 起動()
+    const editor = 本体(wrapper)
+    editor.view.dispatch(editor.state.tr.insertText('。', editor.state.doc.content.size - 1))
+    wrapper.unmount() // 閉じるときに flush される
+
+    for (let i = 0; i < 50; i += 1) {
+      await flushPromises()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const 保存 = await loadDocument()
+      if (JSON.stringify(保存?.doc ?? '').includes('# まえがき')) return
+    }
+    throw new Error('保存された内容から見出しが失われています')
+  })
+})
