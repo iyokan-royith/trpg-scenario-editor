@@ -13,8 +13,46 @@ import { validateTemplateDefinition, TemplateDefinitionError } from './schema'
 import type { TemplateDefinition } from './model'
 
 /**
+ * ⚠ 「キーとして使われる**値**」を持つプロパティ名。
+ *   `fields[].key` と `outputs[].key` / `outputs[].source` は、
+ *   あとでインスタンスのデータを引くときの**キーそのもの**になる。
+ *   `label` や `name` は表示名なので**含めない**（正規化しても害は無いが、
+ *   「何がキーか」を曖昧にしないために区別しておく）。
+ */
+const KEY_VALUED_PROPERTIES = new Set(['key', 'source'])
+
+/**
+ * ⭐ 定義の中のキー文字列を **NFC へ揃える**（DESIGN-v0.md §1-8-4 規約①）。
+ *
+ * ⚠⚠ **見た目が同じキーが一致しない**事故を防ぐための唯一の場所。
+ *   濁点は 1 文字（NFC）にも「か＋濁点」の 2 文字（NFD）にも書けて、
+ *   **画面上は完全に同じに見える**のに、JS の文字列比較・オブジェクトのキー参照・
+ *   `JSON.parse` の往復・js-yaml の**どれも一致しない**（実測）。
+ *   macOS 由来のファイル名やコピー&ペーストで NFD は普通に紛れ込む。
+ *
+ * ⚠ 揃えるのは**キーだけ**で、値（表示名・本文）には触らない。
+ *   値まで書き換えると、利用者が書いたとおりに出ない場所ができる。
+ *
+ * ⚠ 入口が 1 本（Q6）だからここに置けば足りる。**各層に散らさない。**
+ */
+export function normalizeKeysToNfc(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeKeysToNfc)
+  if (typeof value !== 'object' || value === null) return value
+
+  const out: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalized =
+      KEY_VALUED_PROPERTIES.has(key) && typeof child === 'string'
+        ? child.normalize('NFC')
+        : normalizeKeysToNfc(child)
+    out[key.normalize('NFC')] = normalized
+  }
+  return out
+}
+
+/**
  * テンプレ定義の JSON テキストを読む。**同梱・持ち込みの区別なくここを通る。**
- * @param 出所 エラーメッセージに出す「どのファイルか」
+ * @param source エラーメッセージに出す「どのファイルか」
  */
 export function readTemplateDefinition(text: string, source: string): TemplateDefinition {
   let parsed: unknown
@@ -26,7 +64,9 @@ export function readTemplateDefinition(text: string, source: string): TemplateDe
       `JSON として読めません: ${error instanceof Error ? error.message : String(error)}`,
     ])
   }
-  return validateTemplateDefinition(parsed, source)
+  // ⚠ 検証より**前**に通す。検証のエラーメッセージにもキーが出るので、
+  //   ここが後だと「同じに見える 2 つのキー」がメッセージ上でも見分けられなくなる。
+  return validateTemplateDefinition(normalizeKeysToNfc(parsed), source)
 }
 
 /** 同梱テンプレ 1 件（テキストと出所の対）。 */
