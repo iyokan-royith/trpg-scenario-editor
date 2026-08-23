@@ -1,0 +1,12 @@
+{
+  "id": "builtin.dungeon-map",
+  "name": "迷宮マップ",
+  "version": "0.1.0",
+  "fields": [
+    { "key": "overview", "type": "object" },
+    { "key": "entrances", "type": "array" },
+    { "key": "corridors", "type": "array" },
+    { "key": "rooms", "type": "array" }
+  ],
+  "outputs": [{ "pattern": "builtin:dungeon-map" }]
+}

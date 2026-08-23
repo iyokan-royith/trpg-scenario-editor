@@ -9,6 +9,7 @@
  *     `readTemplateDefinition(text, source)` へ渡す。**入口はこの 1 本しかない。**
  */
 import imageJson from '../templates/image.json?raw'
+import dungeonMapJson from '../templates/dungeon-map.json?raw'
 import { validateTemplateDefinition, TemplateDefinitionError } from './schema'
 import type { TemplateDefinition } from './model'
 
@@ -78,6 +79,7 @@ export interface BundledTemplate {
 /** リポジトリに同梱しているテンプレ定義。⚠ **普通の JSON**であって特別扱いはしない（Q6）。 */
 export const bundledTemplates: BundledTemplate[] = [
   { source: 'src/templates/image.json', text: imageJson },
+  { source: 'src/templates/dungeon-map.json', text: dungeonMapJson },
 ]
 
 /** 同梱テンプレを全部読む。壊れていれば `TemplateDefinitionError` が飛ぶ（黙って落とさない）。 */
