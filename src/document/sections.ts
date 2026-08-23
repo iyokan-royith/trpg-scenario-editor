@@ -1,6 +1,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import { PART_REF_NODE } from '../p0/partRefExtension'
+import { 最大レベル, 最小レベル, 見出し記号, 見出しレベル, 記号の長さ } from './heading'
 
 /**
  * 左ペインからの並べ替え・階層変更。
@@ -20,12 +21,13 @@ export interface SectionRange {
   level: number | null
 }
 
-const MIN_LEVEL = 1
-const MAX_LEVEL = 6
-
+/**
+ * 見出しレベルは **本文の記号から読む**（`attrs.level` は読まない）。
+ * CONCEPT Q2 改訂（2026-08-23）で記号が本文に残るようになり、真実がテキスト側へ移った。
+ * ⚠ こうしておくと、テストが素で組んだ doc（同期プラグインを通っていない）でも正しく動く。
+ */
 function headingLevel(node: PMNode): number | null {
-  if (node.type.name !== 'heading') return null
-  return Number(node.attrs.level) || 1
+  return 見出しレベル(node.textContent)
 }
 
 /** doc の直下のブロック境界（＝挿入して良い位置）を全部返す。先頭 0 と末尾を含む。 */
@@ -121,7 +123,49 @@ export function moveSection(
 }
 
 /**
+ * 節の階層を変えられるか。変えられないなら**理由**を返す（UI がそのまま出せる形）。
+ *
+ * ⭐ 「できるか」と「やる」を分けてあるのは、**ボタンの見た目と実行が同じ規則から出る**ため。
+ *   別々に判定すると「押せるのに押すと断られる」が生まれる。
+ */
+export type 階層変更の可否 =
+  | { 可: true }
+  | { 可: false; 理由: 'レベルの範囲外' | '配下が範囲外へ押し出される' | '見出しではない' }
+
+export function 階層を変えられるか(
+  doc: PMNode,
+  sourcePos: number,
+  newLevel: number,
+): 階層変更の可否 {
+  const range = sectionRangeAt(doc, sourcePos)
+  if (!range || range.level === null) return { 可: false, 理由: '見出しではない' }
+  if (newLevel < 最小レベル || newLevel > 最大レベル) {
+    return { 可: false, 理由: 'レベルの範囲外' }
+  }
+  const delta = newLevel - range.level
+  if (delta === 0) return { 可: false, 理由: 'レベルの範囲外' }
+
+  // ⚠ 配下がはみ出す場合は **断る**。以前はここで clamp していて、
+  //   「親を 1 つ下げたら、上限に張り付いた子だけ動かず、親子が同じ深さに潰れる」
+  //   という **黙ったままの構造破壊**が起きていた（2026-08-23 に実測）。
+  let はみ出す = false
+  doc.forEach((node, offset) => {
+    if (offset < range.from || offset >= range.to) return
+    const level = headingLevel(node)
+    if (level === null) return
+    const next = level + delta
+    if (next < 最小レベル || next > 最大レベル) はみ出す = true
+  })
+  return はみ出す ? { 可: false, 理由: '配下が範囲外へ押し出される' } : { 可: true }
+}
+
+/**
  * 節の階層を変える Transaction を組む。見出し本体と、その配下の見出しを同じ量だけずらす。
+ *
+ * ⭐⭐ **書き換えるのは `attrs.level` ではなく、本文の見出し記号そのもの**
+ *   （CONCEPT Q2 改訂・2026-08-23）。記号が真実なので、記号を変えないと何も変わらない。
+ *   ロイスの言う「メタデータはメタデータとして編集したい」を、
+ *   左ペインのボタンも**同じ実体（記号）を編集する**形で満たしている。
  *
  * ⚠ パート参照には効かない（深さは「どこに置いたか」で決まるので、
  *    階層を変えるとは別の見出しの下へ **移す** ことに他ならない → moveSection を使う）。
@@ -131,23 +175,31 @@ export function setSectionLevel(
   sourcePos: number,
   newLevel: number,
 ): Transaction | null {
-  if (newLevel < MIN_LEVEL || newLevel > MAX_LEVEL) return null
   const doc = state.doc
-  const range = sectionRangeAt(doc, sourcePos)
-  if (!range || range.level === null) return null
+  if (!階層を変えられるか(doc, sourcePos, newLevel).可) return null
 
-  const delta = newLevel - range.level
-  if (delta === 0) return null
+  const range = sectionRangeAt(doc, sourcePos)!
+  const delta = newLevel - range.level!
 
-  const tr = state.tr
+  const 書き換え: Array<{ from: number; to: number; 記号: string }> = []
   doc.forEach((node, offset) => {
     if (offset < range.from || offset >= range.to) return
     const level = headingLevel(node)
     if (level === null) return
-    const next = Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, level + delta))
-    if (next === level) return
-    tr.setNodeMarkup(offset, undefined, { ...node.attrs, level: next })
+    // ノードの中身は offset+1 から始まる。記号はその先頭にある。
+    書き換え.push({
+      from: offset + 1,
+      to: offset + 1 + 記号の長さ(node.textContent),
+      記号: 見出し記号(level + delta),
+    })
   })
+  if (書き換え.length === 0) return null
+
+  const tr = state.tr
+  // ⚠ 記号の長さが変わると後ろの位置がずれるので、**うしろから**当てる。
+  for (const 一件 of [...書き換え].reverse()) {
+    tr.insertText(一件.記号, 一件.from, 一件.to)
+  }
   return tr.docChanged ? tr : null
 }
 

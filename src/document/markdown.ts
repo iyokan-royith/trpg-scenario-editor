@@ -1,8 +1,9 @@
 import MarkdownIt from 'markdown-it'
 import { MarkdownParser, MarkdownSerializer } from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
-import { Slice } from '@tiptap/pm/model'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import { documentSchema } from './schema'
+import { 見出し記号, 見出しレベル, 記号の長さ } from './heading'
 
 /**
  * md の入出力。
@@ -112,9 +113,25 @@ export const markdownSerializer = new MarkdownSerializer(
       state.write(fence)
       state.closeBlock(node)
     },
+    /**
+     * ⚠⚠ **記号は本文のテキストとして既に入っている**（CONCEPT Q2 改訂・2026-08-23）。
+     *   だから `'#'.repeat(level)` を足すと **`## ## みだし` と二重になる**。
+     *   ここが「記号を剥がす層」の 1 つ目。
+     *
+     * ⚠ 記号だけは `state.write()` で**生のまま**書く。
+     *   通常の inline として出すと、行頭の `#` が md のエスケープ対象になり `\## ` になる。
+     */
     heading(state, node) {
-      state.write(state.repeat('#', Number(node.attrs.level) || 1) + ' ')
-      state.renderInline(node, false)
+      const text = node.textContent
+      const level = 見出しレベル(text)
+      if (level === null) {
+        // 記号を持たない見出し（外から来た JSON など）。記号を補って出す。
+        state.write(見出し記号(Number(node.attrs.level) || 1))
+        state.renderInline(node, false)
+      } else {
+        state.write(見出し記号(level))
+        state.renderInline(node.copy(node.content.cut(記号の長さ(text))), false)
+      }
       state.closeBlock(node)
     },
     horizontalRule(state, node) {
@@ -181,10 +198,35 @@ export const markdownSerializer = new MarkdownSerializer(
 )
 
 /** md 文字列 → ドキュメント。 */
+/**
+ * 解釈し終えた doc の見出しに、**記号をテキストとして戻す**。
+ *
+ * ⚠ markdown-it は記号をトークンの種類（`heading_open` の tag）に畳んでしまうので、
+ *   パーサの表だけでは記号を本文に残せない。**解釈のあとで戻すのがいちばん素直**
+ *   （パーサに手を入れると、記号の規則が `heading.ts` と 2 箇所に散る）。
+ */
+function 記号を本文に戻す(doc: PMNode, schema: Schema): PMNode {
+  const 見出し = schema.nodes.heading
+  if (!見出し) return doc
+
+  const blocks: PMNode[] = []
+  let 変えた = false
+  doc.forEach((node) => {
+    if (node.type !== 見出し || 見出しレベル(node.textContent) !== null) {
+      blocks.push(node)
+      return
+    }
+    const 記号 = schema.text(見出し記号(Number(node.attrs.level) || 1))
+    blocks.push(node.copy(Fragment.from(記号).append(node.content)))
+    変えた = true
+  })
+  return 変えた ? doc.copy(Fragment.fromArray(blocks)) : doc
+}
+
 export function mdToDoc(markdown: string, schema: Schema = documentSchema): PMNode {
   const doc = parserFor(schema).parse(markdown)
   if (!doc) throw new Error('md を解釈できませんでした')
-  return doc
+  return 記号を本文に戻す(doc, schema)
 }
 
 /** ドキュメント → md 文字列。 */

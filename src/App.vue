@@ -2,8 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { EditorContent, type Editor } from '@tiptap/vue-3'
 import { createDocumentEditor } from './document/editor'
-import { outline } from './document/outline'
-import { dropTargetPos, moveSection, setSectionLevel } from './document/sections'
+import { flattenOutline, outline } from './document/outline'
+import {
+  dropTargetPos,
+  moveSection,
+  setSectionLevel,
+  階層を変えられるか,
+} from './document/sections'
 import { docToMd, mdToDoc } from './document/markdown'
 import OutlinePane from './ui/OutlinePane.vue'
 import { usePartStore } from './p0/partStore'
@@ -97,16 +102,54 @@ function 移動(payload: { 掴んだ: number; 落とした先: number }) {
   しらせ.value = ''
 }
 
+/**
+ * ⚠ 知らせを出す条件（要望4・2026-08-23）:
+ *   **「限界に達している」だけでは何も出さない**——それはボタンが押せないことで示す。
+ *   知らせは「**やってみたが、見えない理由で断られた**」ときだけ出す。
+ *   いま該当するのは「配下の見出しが範囲外へ押し出される」1 つだけで、
+ *   これは左ペインを見ても分からない（配下のレベルまでは読み取れない）。
+ */
 function 階層変更(payload: { pos: number; level: number }) {
   const ed = editor.value
   if (!ed) return
+  const 可否 = 階層を変えられるか(ed.state.doc, payload.pos, payload.level)
+  if (!可否.可) {
+    しらせ.value =
+      可否.理由 === '配下が範囲外へ押し出される'
+        ? 'この節の中に、これ以上ずらせない見出しがあります'
+        : ''
+    return
+  }
   const tr = setSectionLevel(ed.state, payload.pos, payload.level)
   if (!tr) {
-    しらせ.value = 'これ以上は変えられません'
+    しらせ.value = ''
     return
   }
   ed.view.dispatch(tr)
   しらせ.value = ''
+}
+
+/**
+ * ドラッグ中の挿入位置ガイド（要望3）。
+ * ⭐ **`dropTargetPos()` の値そのものを可視化する。** 判定と別の規則を持たせない。
+ */
+const ガイド = ref<number | 'まつび' | null>(null)
+
+function ドラッグ中(payload: { 掴んだ: number; 上に居る: number }) {
+  const ed = editor.value
+  if (!ed) return
+  const dest = dropTargetPos(ed.state.doc, payload.掴んだ, payload.上に居る)
+  if (dest === null) {
+    ガイド.value = null
+    return
+  }
+  // 挿入位置（doc 上の境界）を、左ペインのどの項目の手前かに翻訳する。
+  const 次の項目 = flattenOutline(見出しツリー.value).find((item) => item.pos >= dest)
+  ガイド.value = 次の項目 ? 次の項目.pos : 'まつび'
+}
+
+function ドラッグ終了() {
+  ガイド.value = null
 }
 
 function 選択(pos: number) {
@@ -149,9 +192,12 @@ function md読み込み() {
       <OutlinePane
         class="app__outline"
         :items="見出しツリー"
+        :ガイド="ガイド"
         @移動="移動"
         @階層変更="階層変更"
         @選択="選択"
+        @ドラッグ中="ドラッグ中"
+        @ドラッグ終了="ドラッグ終了"
       />
       <main class="app__editor">
         <EditorContent v-if="editor" :editor="editor" />
@@ -210,6 +256,47 @@ function md読み込み() {
 }
 .app__md textarea {
   width: 100%;
+  font-family: monospace;
+}
+
+/*
+ * ⚠ 以下はエディタの中身（ProseMirror が作る DOM）に当てるので :deep が要る。
+ */
+
+/* 要望1: ブラウザ既定の contenteditable の枠を消す。
+   ⚠ 消しっぱなしにするとフォーカスの所在が分からなくなるので、
+     代わりに「いまカーソルが居るブロック」を示す（CurrentBlock 拡張）。 */
+.app__editor :deep(.ProseMirror) {
+  outline: none;
+}
+.app__editor :deep(.ProseMirror > *) {
+  /* 印の分の場所を先に取る（印が出た時に行が動かないように） */
+  border-left: 3px solid transparent;
+  padding-left: 0.5rem;
+  margin-left: -0.75rem;
+}
+.app__editor :deep(.現在のブロック) {
+  border-left-color: #2b6cb0;
+  background: #f4f8fd;
+}
+
+/* 要望2: 見出しは **大きさを変えない**。
+   ロイス:「強調も文字の大きさを変更するのではなくて、やるなら別の方法がいい。色がかわるぐらい」 */
+.app__editor :deep(.ProseMirror h1),
+.app__editor :deep(.ProseMirror h2),
+.app__editor :deep(.ProseMirror h3),
+.app__editor :deep(.ProseMirror h4),
+.app__editor :deep(.ProseMirror h5),
+.app__editor :deep(.ProseMirror h6) {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1a4f8a;
+  margin: 0.6em 0 0.2em;
+}
+
+/* 記号そのものは本物のテキストとして残っている。装飾で淡く見せるだけ。 */
+.app__editor :deep(.見出し記号) {
+  color: #9aa5b1;
   font-family: monospace;
 }
 </style>

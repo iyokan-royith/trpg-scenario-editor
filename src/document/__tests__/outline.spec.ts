@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { Editor } from '@tiptap/vue-3'
 import { documentExtensions } from '../schema'
+import { 見出し記号, 記号の長さ } from '../heading'
 import { outline, flattenOutline } from '../outline'
 import { PART_REF_NODE } from '../../p0/partRefExtension'
 import {
@@ -44,8 +45,16 @@ function 参照(partId: string) {
   return { type: PART_REF_NODE, attrs: { instanceId: 'i1', partId } }
 }
 
+/**
+ * ⚠ 2026-08-23 の CONCEPT Q2 改訂で、**見出し記号は本物のテキストとして本文に入る**。
+ *   フィクスチャも記号を含む形にする（＝これが新しい仕様。テストを甘くしたのではない）。
+ */
 function 見出し(level: number, text: string) {
-  return { type: 'heading', attrs: { level }, content: [{ type: 'text', text }] }
+  return {
+    type: 'heading',
+    attrs: { level },
+    content: [{ type: 'text', text: 見出し記号(level) + text }],
+  }
 }
 
 function 段落(text: string) {
@@ -81,10 +90,26 @@ describe('P1-2: ツリーは doc から導出される（別データを持た�
   it('本文を編集するとツリーが追従する（ツリー側を触っていない）', () => {
     const 見出しの位置 = 0
     const node = editor.state.doc.nodeAt(見出しの位置)!
+    // 記号のうしろ（題名の部分）だけを書き換える
     editor.view.dispatch(
-      editor.state.tr.insertText('かきかえ', 見出しの位置 + 1, 見出しの位置 + node.nodeSize - 1),
+      editor.state.tr.insertText(
+        'かきかえ',
+        見出しの位置 + 1 + 記号の長さ(node.textContent),
+        見出しの位置 + node.nodeSize - 1,
+      ),
     )
     expect(outline(editor.state.doc, parts)[0]!.title).toBe('かきかえ')
+  })
+
+  it('⭐ 記号を消すと見出しでなくなり、ツリーから消える（完了条件 #1 の後半）', () => {
+    const node = editor.state.doc.nodeAt(0)!
+    editor.view.dispatch(editor.state.tr.delete(1, 1 + 記号の長さ(node.textContent)))
+    expect(outline(editor.state.doc, parts).map((i) => i.title)).not.toContain('だいいちしょう')
+  })
+
+  it('⭐ 記号の数を変えると、その場でレベルが変わる', () => {
+    editor.view.dispatch(editor.state.tr.insertText('###', 1, 2))
+    expect(outline(editor.state.doc, parts)[0]!.level).toBe(3)
   })
 
   it('図のパートは見出しではないのでツリーに出ない', () => {
@@ -169,5 +194,24 @@ describe('P1-契約: outline は doc だけでは作れない（parts を受け�
     const 減った = parts.filter((p) => p.partId !== 'ひきだし:h1')
     const titles = flattenOutline(outline(editor.state.doc, 減った)).map((i) => i.title)
     expect(titles).not.toContain('ひきだし けしごむ')
+  })
+})
+
+/**
+ * ⭐ CONCEPT Q2 改訂（2026-08-23）の陰性テスト。
+ * 方針メモ:「アが破れているなら **ツリーの見出し文字列に記号が混ざる**はず」。
+ */
+describe('P1-2 改訂: ツリーには記号を出さない（記号を剥がす層）', () => {
+  it('⭐ 左ペインに `## みだし` とは出ない（題名だけが出る）', () => {
+    const flat = flattenOutline(outline(editor.state.doc, parts))
+    for (const item of flat) {
+      expect(item.title).not.toMatch(/^#/)
+      expect(item.title).not.toContain('# ')
+    }
+    expect(flat.map((i) => i.title)).toContain('だいいちしょう')
+  })
+
+  it('本文側には記号が残っている（剥がしたのはツリーだけ）', () => {
+    expect(editor.state.doc.child(0).textContent).toBe('# だいいちしょう')
   })
 })

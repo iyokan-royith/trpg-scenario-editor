@@ -42,25 +42,58 @@ afterEach(() => {
   editor?.destroy()
 })
 
-describe('P1-1: 見出し記号を打つとその場で見出しになる', () => {
-  it('「## 」を打つと段落が level 2 の見出しに変わる', () => {
+/**
+ * ⭐⭐ 2026-08-23 の CONCEPT Q2 改訂（ロイス指示「ア＝ソース方式」）で **期待値が反転した**。
+ *   旧: 「`## ` を打つと**記号が消えて**見出しになる」
+ *   新: 「見出しになるが、**記号は本物のテキストとして残り、編集できる**。消せば段落に戻る」
+ *   ⚠ テストを甘くしたのではなく、**仕様が変わった**。
+ */
+describe('P1-1: 見出し記号を打つと見出しになるが、記号は残る', () => {
+  it('⭐ 「## 」を打つと見出しになり、記号は本文に残っている', () => {
     打つ('## みだし')
     // ⚠ 末尾の空段落は StarterKit の TrailingNode（見出しの後ろに書けるようにする）。
     expect(ブロックの種類()).toEqual(['heading', 'paragraph'])
     expect(editor.state.doc.child(0).attrs.level).toBe(2)
-    // ⚠ 記号そのものは本文に残らない（残ったら「変換されていない」）
-    expect(editor.state.doc.textContent).toBe('みだし')
+    // ⭐ ここが改訂の中身。記号が消えたら「勝手に消された」ことになる
+    expect(editor.state.doc.textContent).toBe('## みだし')
   })
 
   it('「# 」なら level 1 になる', () => {
     打つ('# おおみだし')
     expect(editor.state.doc.child(0).attrs.level).toBe(1)
+    expect(editor.state.doc.textContent).toBe('# おおみだし')
+  })
+
+  it('⭐ 記号を消すと段落に戻る', () => {
+    打つ('## みだし')
+    expect(ブロックの種類()[0]).toBe('heading')
+    // 記号 3 文字（`## `）を消す
+    editor.view.dispatch(editor.state.tr.delete(1, 4))
+    expect(ブロックの種類()[0]).toBe('paragraph')
+    expect(editor.state.doc.textContent).toBe('みだし')
+  })
+
+  it('⭐ 記号を足すとレベルが変わる（メタデータをテキストとして編集できる）', () => {
+    打つ('## みだし')
+    editor.view.dispatch(editor.state.tr.insertText('#', 1, 1))
+    expect(editor.state.doc.child(0).attrs.level).toBe(3)
+    expect(editor.state.doc.textContent).toBe('### みだし')
   })
 
   it('記号でない先頭文字は段落のまま（陰性対照）', () => {
     打つ('ふつうの本文')
     expect(ブロックの種類()).toEqual(['paragraph'])
     expect(editor.state.doc.textContent).toBe('ふつうの本文')
+  })
+
+  it('スペースが無ければ見出しにしない（陰性対照・`#タグ` を壊さない）', () => {
+    打つ('#タグ')
+    expect(ブロックの種類()).toEqual(['paragraph'])
+  })
+
+  it('`#` が 7 つ以上なら見出しにしない（陰性対照）', () => {
+    打つ('####### ななつ')
+    expect(ブロックの種類()).toEqual(['paragraph'])
   })
 })
 
