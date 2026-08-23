@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { flattenOutline, type OutlineItem } from '../document/outline'
-import { 最大レベル, 最小レベル } from '../document/heading'
+import { MAX_LEVEL, MIN_LEVEL } from '../document/heading'
 
 /**
  * 左ペインの見出しツリー。
@@ -15,8 +15,8 @@ import { 最大レベル, 最小レベル } from '../document/heading'
  */
 const props = defineProps<{
   items: OutlineItem[]
-  /** ガイド線を引く場所。項目の pos か、末尾を示す 'まつび'。null なら描かない */
-  ガイド?: number | 'まつび' | null
+  /** ガイド線を引く場所。項目の pos か、末尾を示す 'end'。null なら描かない */
+  guide?: number | 'end' | null
 }>()
 
 const emit = defineEmits<{
@@ -25,51 +25,51 @@ const emit = defineEmits<{
    * ⚠ ここは doc の挿入位置を計算しない（それは document 層の仕事）。
    *   このペインが知っているのは「どれを、どれの所へ落としたか」だけ。
    */
-  (e: '移動', payload: { 掴んだ: number; 落とした先: number }): void
-  (e: '階層変更', payload: { pos: number; level: number }): void
-  (e: '選択', pos: number): void
+  (e: 'move', payload: { grabbed: number; droppedOn: number }): void
+  (e: 'changeLevel', payload: { pos: number; level: number }): void
+  (e: 'select', pos: number): void
   /** ドラッグ中に、いまどれの上に居るか（ガイドを出すため） */
-  (e: 'ドラッグ中', payload: { 掴んだ: number; 上に居る: number }): void
-  (e: 'ドラッグ終了'): void
+  (e: 'dragOver', payload: { grabbed: number; over: number }): void
+  (e: 'dragEnd'): void
 }>()
 
 const flat = computed(() => flattenOutline(props.items))
-const つかんでいる位置 = ref<number | null>(null)
+const grabbedPos = ref<number | null>(null)
 
-function つかむ(item: OutlineItem) {
-  つかんでいる位置.value = item.pos
+function grab(item: OutlineItem) {
+  grabbedPos.value = item.pos
 }
 
-function 上を通る(item: OutlineItem) {
-  const 掴んだ = つかんでいる位置.value
-  if (掴んだ === null || 掴んだ === item.pos) return
-  emit('ドラッグ中', { 掴んだ, 上に居る: item.pos })
+function onDragOver(item: OutlineItem) {
+  const grabbed = grabbedPos.value
+  if (grabbed === null || grabbed === item.pos) return
+  emit('dragOver', { grabbed, over: item.pos })
 }
 
-function 落とす(item: OutlineItem) {
-  const 掴んだ = つかんでいる位置.value
-  つかんでいる位置.value = null
-  emit('ドラッグ終了')
-  if (掴んだ === null || 掴んだ === item.pos) return
-  emit('移動', { 掴んだ, 落とした先: item.pos })
+function drop(item: OutlineItem) {
+  const grabbed = grabbedPos.value
+  grabbedPos.value = null
+  emit('dragEnd')
+  if (grabbed === null || grabbed === item.pos) return
+  emit('move', { grabbed, droppedOn: item.pos })
 }
 
-function やめる() {
-  つかんでいる位置.value = null
-  emit('ドラッグ終了')
+function cancel() {
+  grabbedPos.value = null
+  emit('dragEnd')
 }
 
 /** 上限・下限に達している向きのボタンは押せなくする（要望4）。 */
-function 上げられるか(item: OutlineItem) {
-  return item.kind === '見出し' && item.level > 最小レベル
+function canPromote(item: OutlineItem) {
+  return item.kind === 'heading' && item.level > MIN_LEVEL
 }
-function 下げられるか(item: OutlineItem) {
-  return item.kind === '見出し' && item.level < 最大レベル
+function canDemote(item: OutlineItem) {
+  return item.kind === 'heading' && item.level < MAX_LEVEL
 }
 </script>
 
 <template>
-  <nav class="outline" aria-label="見出し" @dragend="やめる">
+  <nav class="outline" aria-label="見出し" @dragend="cancel">
     <p v-if="flat.length === 0" class="outline__empty">見出しはまだありません</p>
     <ul v-else class="outline__list">
       <li
@@ -78,38 +78,38 @@ function 下げられるか(item: OutlineItem) {
         class="outline__item"
         :class="[
           `outline__item--depth${item.level}`,
-          { 'outline__item--guide': ガイド === item.pos },
+          { 'outline__item--guide': guide === item.pos },
         ]"
         :data-kind="item.kind"
         :data-level="item.level"
         draggable="true"
-        @dragstart="つかむ(item)"
-        @dragover.prevent="上を通る(item)"
-        @drop.prevent="落とす(item)"
-        @click="emit('選択', item.pos)"
+        @dragstart="grab(item)"
+        @dragover.prevent="onDragOver(item)"
+        @drop.prevent="drop(item)"
+        @click="emit('select', item.pos)"
       >
         <span class="outline__title">{{ item.title || '（無題）' }}</span>
-        <span v-if="item.kind === 'パート参照'" class="outline__badge">パート</span>
+        <span v-if="item.kind === 'partRef'" class="outline__badge">パート</span>
         <span v-else class="outline__tools">
           <button
             type="button"
             title="階層を上げる"
-            :disabled="!上げられるか(item)"
-            @click.stop="emit('階層変更', { pos: item.pos, level: item.level - 1 })"
+            :disabled="!canPromote(item)"
+            @click.stop="emit('changeLevel', { pos: item.pos, level: item.level - 1 })"
           >
             ←
           </button>
           <button
             type="button"
             title="階層を下げる"
-            :disabled="!下げられるか(item)"
-            @click.stop="emit('階層変更', { pos: item.pos, level: item.level + 1 })"
+            :disabled="!canDemote(item)"
+            @click.stop="emit('changeLevel', { pos: item.pos, level: item.level + 1 })"
           >
             →
           </button>
         </span>
       </li>
-      <li v-if="ガイド === 'まつび'" class="outline__末尾ガイド" aria-hidden="true"></li>
+      <li v-if="guide === 'end'" class="outline__end-guide" aria-hidden="true"></li>
     </ul>
   </nav>
 </template>
@@ -145,7 +145,7 @@ function 下げられるか(item: OutlineItem) {
 .outline__item--guide {
   border-top-color: #2b6cb0;
 }
-.outline__末尾ガイド {
+.outline__end-guide {
   height: 0;
   border-top: 2px solid #2b6cb0;
 }

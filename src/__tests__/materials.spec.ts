@@ -17,7 +17,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { Editor } from '@tiptap/vue-3'
 import App from '../App.vue'
-import { usePartStore, 画像テンプレID } from '../store/partStore'
+import { usePartStore, IMAGE_TEMPLATE_ID } from '../store/partStore'
 import {
   clearDocument,
   clearInstances,
@@ -29,34 +29,34 @@ import { collectPlacedRefs, PART_REF_INLINE_NODE } from '../document/partRefExte
 import type { TemplateInstance } from '../template/model'
 
 /** jsdom には object URL が無いので、生成と解放を数えられる形で置き換える。 */
-let 作ったURL: string[] = []
-let 解放したURL: string[] = []
+let createdUrls: string[] = []
+let revokedUrls: string[] = []
 
-function object_URL_を差し替える() {
-  作ったURL = []
-  解放したURL = []
+function stubObjectUrl() {
+  createdUrls = []
+  revokedUrls = []
   const url = URL as unknown as {
     createObjectURL: (blob: Blob) => string
     revokeObjectURL: (url: string) => void
   }
   url.createObjectURL = () => {
-    const u = `blob:みほん/${作ったURL.length}`
-    作ったURL.push(u)
+    const u = `blob:みほん/${createdUrls.length}`
+    createdUrls.push(u)
     return u
   }
   url.revokeObjectURL = (u: string) => {
-    解放したURL.push(u)
+    revokedUrls.push(u)
   }
 }
 
-function 画像ファイル(名前: string, bytes: number[]): File {
-  return new File([new Uint8Array(bytes)], 名前, { type: 'image/png' })
+function imageFile(name: string, bytes: number[]): File {
+  return new File([new Uint8Array(bytes)], name, { type: 'image/png' })
 }
 
 let pinia: Pinia
 let wrapper: VueWrapper
 
-async function 起動() {
+async function mountApp() {
   pinia = createPinia()
   setActivePinia(pinia)
   wrapper = mount(App, { attachTo: document.body, global: { plugins: [pinia] } })
@@ -70,14 +70,14 @@ async function 起動() {
   return wrapper
 }
 
-function 本体(): Editor {
+function editorOf(): Editor {
   const editor = (wrapper.vm as unknown as { editor: Editor | null }).editor
   if (!editor) throw new Error('エディタが立ち上がっていません')
   return editor
 }
 
 /** 「素材を追加」を押して、ファイルを選ぶところまで（＝利用者がする操作そのもの）。 */
-async function 画像を選ぶ(file: File) {
+async function chooseImage(file: File) {
   const input = wrapper.find('input[type="file"]')
   Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
   await input.trigger('change')
@@ -91,26 +91,26 @@ async function 画像を選ぶ(file: File) {
  *   **マクロタスクを2段またぐ**ので、`flushPromises()` 1 周では終わらない。
  *   固定時間の待ちにすると遅い機械で落ちるので、条件が満たされるまで回す。
  */
-async function 保存が届くまで(判定: (list: TemplateInstance[]) => boolean | Promise<boolean>) {
+async function waitForSaved(isReady: (list: TemplateInstance[]) => boolean | Promise<boolean>) {
   for (let i = 0; i < 50; i += 1) {
     await flushPromises()
     await new Promise((resolve) => setTimeout(resolve, 0))
     const list = await loadInstances()
-    if (await 判定(list)) return list
+    if (await isReady(list)) return list
   }
   throw new Error('保存が届きませんでした')
 }
 
-function 素材の行() {
+function materialRows() {
   return wrapper.findAll('.materials__item')
 }
 
-function 素材の一覧() {
+function materialPane() {
   return wrapper.findComponent({ name: 'MaterialPane' })
 }
 
 beforeEach(async () => {
-  object_URL_を差し替える()
+  stubObjectUrl()
   await clearDocument()
   await clearInstances()
 })
@@ -121,166 +121,164 @@ afterEach(() => {
 
 describe('#1 「素材を追加 → 画像を選ぶ」で素材一覧に出る', () => {
   it('同梱テンプレが loader 経由で読まれていて、選んだ画像が一覧に並ぶ', async () => {
-    await 起動()
+    await mountApp()
     // ⭐ 裏で同梱 JSON が読まれている（これが無いとインスタンスを作ってもパートが生まれない）
     const store = usePartStore()
-    expect(store.definitions[画像テンプレID]).toBeDefined()
+    expect(store.definitions[IMAGE_TEMPLATE_ID]).toBeDefined()
 
-    expect(素材の一覧().text()).toContain('素材はまだありません')
+    expect(materialPane().text()).toContain('素材はまだありません')
 
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1, 2, 3]))
+    await chooseImage(imageFile('ねこ.png', [1, 2, 3]))
 
-    expect(素材の行()).toHaveLength(1)
-    expect(素材の行()[0]!.text()).toContain('ねこ.png')
+    expect(materialRows()).toHaveLength(1)
+    expect(materialRows()[0]!.text()).toContain('ねこ.png')
     // ⚠ 利用者にテンプレートであることを見せない（1-7-2）
-    expect(素材の一覧().text()).not.toContain('テンプレート')
+    expect(materialPane().text()).not.toContain('テンプレート')
   })
 
   it('選んだ画像は保存されている（リロードで残る側の実体）', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [7, 7]))
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [7, 7]))
 
-    const 保存されたもの = await 保存が届くまで((list) => list.length === 1)
-    expect(保存されたもの[0]!.templateId).toBe(画像テンプレID)
-    expect([...new Uint8Array(await 保存されたもの[0]!.images.画像!.arrayBuffer())]).toEqual([7, 7])
+    const stored = await waitForSaved((list) => list.length === 1)
+    expect(stored[0]!.templateId).toBe(IMAGE_TEMPLATE_ID)
+    expect([...new Uint8Array(await stored[0]!.images.image!.arrayBuffer())]).toEqual([7, 7])
   })
 })
 
 describe('#5 「未配置 N 件」が動く', () => {
   it('1 個置くと N が 1 減る', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
-    expect(素材の一覧().text()).toContain('未配置 1 件')
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
+    expect(materialPane().text()).toContain('未配置 1 件')
 
-    await 素材の行()[0]!.findAll('button')[0]!.trigger('click') // 「本文へ挿入」
+    await materialRows()[0]!.findAll('button')[0]!.trigger('click') // 「本文へ挿入」
     await nextTick()
 
-    expect(素材の一覧().text()).toContain('未配置 0 件')
+    expect(materialPane().text()).toContain('未配置 0 件')
   })
 
   it('「未配置だけ」で絞り込める', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
-    await 素材の行()[0]!.findAll('button')[0]!.trigger('click')
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
+    await materialRows()[0]!.findAll('button')[0]!.trigger('click')
     await nextTick()
 
     await wrapper.find('.materials__filter input').setValue(true)
-    expect(素材の行()).toHaveLength(0)
-    expect(素材の一覧().text()).toContain('素材はまだありません')
+    expect(materialRows()).toHaveLength(0)
+    expect(materialPane().text()).toContain('素材はまだありません')
   })
 })
 
 describe('#2 本文の任意の位置に差し込める', () => {
   it('カーソルが文の途中にあれば、文の途中へ入る（前後のテキストが割れる）', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
 
     // 初期本文は「ここに書きはじめる」。その真ん中にカーソルを置く。
-    本体().commands.setTextSelection(5)
-    await 素材の行()[0]!.findAll('button')[0]!.trigger('click')
+    editorOf().commands.setTextSelection(5)
+    await materialRows()[0]!.findAll('button')[0]!.trigger('click')
     await nextTick()
 
-    const 段落 = 本体().state.doc.firstChild!
-    expect(段落.type.name).toBe('paragraph')
+    const paragraph = editorOf().state.doc.firstChild!
+    expect(paragraph.type.name).toBe('paragraph')
     // ⭐ 完了条件 #2: **文の途中**。block 版ではこの形が作れない
-    expect([...Array(段落.childCount).keys()].map((i) => 段落.child(i).type.name)).toEqual([
-      'text',
-      PART_REF_INLINE_NODE,
-      'text',
-    ])
-    expect(段落.child(0).text).toBe('ここに書')
-    expect(段落.child(2).text).toBe('きはじめる')
+    expect(
+      [...Array(paragraph.childCount).keys()].map((i) => paragraph.child(i).type.name),
+    ).toEqual(['text', PART_REF_INLINE_NODE, 'text'])
+    expect(paragraph.child(0).text).toBe('ここに書')
+    expect(paragraph.child(2).text).toBe('きはじめる')
   })
 
   it('空の段落に単独で置ける（＝「ブロックの素材」の見え方）', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
 
     // 末尾に空の段落を足して、そこへ置く
-    const ed = 本体()
+    const ed = editorOf()
     ed.commands.setTextSelection(ed.state.doc.content.size - 1)
     ed.commands.insertContent({ type: 'paragraph' })
-    await 素材の行()[0]!.findAll('button')[0]!.trigger('click')
+    await materialRows()[0]!.findAll('button')[0]!.trigger('click')
     await nextTick()
 
-    const 最後の段落 = ed.state.doc.child(ed.state.doc.childCount - 1)
-    expect(最後の段落.childCount).toBe(1)
-    expect(最後の段落.child(0).type.name).toBe(PART_REF_INLINE_NODE)
+    const lastParagraph = ed.state.doc.child(ed.state.doc.childCount - 1)
+    expect(lastParagraph.childCount).toBe(1)
+    expect(lastParagraph.child(0).type.name).toBe(PART_REF_INLINE_NODE)
   })
 })
 
 describe('#3 同じ画像を 2 箇所に置ける。差し替えると両方変わる', () => {
   it('画面の「差し替え」で、置かれた 2 箇所とも入れ替わり、保存にも反映される', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
-    const ボタン = () => 素材の行()[0]!.findAll('button')
-    await ボタン()[0]!.trigger('click') // 本文へ挿入
-    await ボタン()[0]!.trigger('click') // もう 1 箇所（S7-3: 2 箇所配置は正常）
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
+    const buttons = () => materialRows()[0]!.findAll('button')
+    await buttons()[0]!.trigger('click') // 本文へ挿入
+    await buttons()[0]!.trigger('click') // もう 1 箇所（S7-3: 2 箇所配置は正常）
     await nextTick()
 
-    const 画像たち = () => wrapper.findAll('.part-ref__image')
-    expect(画像たち()).toHaveLength(2)
-    const まえ = 画像たち().map((v) => v.attributes('src'))
+    const imageNodes = () => wrapper.findAll('.part-ref__image')
+    expect(imageNodes()).toHaveLength(2)
+    const before = imageNodes().map((v) => v.attributes('src'))
     // ⚠ object URL は NodeView ごとに発行するので**同じ文字列にはならない**（同じ Blob を指す別の口）。
     //   「同じものを指しているか」は URL ではなく、差し替えたときに両方が変わるかで見る。
-    expect(まえ.every((src) => Boolean(src))).toBe(true)
-    expect(作ったURL).toHaveLength(2)
+    expect(before.every((src) => Boolean(src))).toBe(true)
+    expect(createdUrls).toHaveLength(2)
 
     // ⭐ 利用者の操作で差し替える（本文には一度も触らない）
-    await ボタン()[1]!.trigger('click') // 「差し替え」
-    await 画像を選ぶ(画像ファイル('いぬ.png', [9, 9]))
+    await buttons()[1]!.trigger('click') // 「差し替え」
+    await chooseImage(imageFile('いぬ.png', [9, 9]))
 
-    const あと = 画像たち().map((v) => v.attributes('src'))
-    expect(あと).toHaveLength(2)
+    const after = imageNodes().map((v) => v.attributes('src'))
+    expect(after).toHaveLength(2)
     // ⭐ 2 箇所とも新しい実体を指し直している
-    expect(あと[0]).not.toBe(まえ[0])
-    expect(あと[1]).not.toBe(まえ[1])
+    expect(after[0]).not.toBe(before[0])
+    expect(after[1]).not.toBe(before[1])
     // ⚠ 古い object URL は捨てる（放っておくとページの寿命まで Blob が残る）
-    expect(解放したURL).toEqual(expect.arrayContaining(まえ as string[]))
+    expect(revokedUrls).toEqual(expect.arrayContaining(before as string[]))
 
     // ⚠⚠ 保存まで届いていること。ここが抜けると**画面では差し替わったのにリロードで戻る**
-    const 保存されたもの = await 保存が届くまで(async (list) => {
-      const blob = list[0]?.images.画像
+    const stored = await waitForSaved(async (list) => {
+      const blob = list[0]?.images.image
       return blob ? (await blob.arrayBuffer()).byteLength === 2 : false
     })
-    expect(保存されたもの).toHaveLength(1)
-    expect([...new Uint8Array(await 保存されたもの[0]!.images.画像!.arrayBuffer())]).toEqual([9, 9])
+    expect(stored).toHaveLength(1)
+    expect([...new Uint8Array(await stored[0]!.images.image!.arrayBuffer())]).toEqual([9, 9])
     // 表示名は差し替えでは変えない（本文中の呼び名が黙って変わらない）
-    expect(保存されたもの[0]!.data.表示名).toBe('ねこ.png')
+    expect(stored[0]!.data.caption).toBe('ねこ.png')
   })
 
   it('差し替えは本文に触らない（参照の数も位置も変わらない）', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
-    const ボタン = () => 素材の行()[0]!.findAll('button')
-    await ボタン()[0]!.trigger('click')
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
+    const buttons = () => materialRows()[0]!.findAll('button')
+    await buttons()[0]!.trigger('click')
     await nextTick()
-    const まえの本文 = JSON.stringify(本体().getJSON())
+    const bodyBefore = JSON.stringify(editorOf().getJSON())
 
-    await ボタン()[1]!.trigger('click')
-    await 画像を選ぶ(画像ファイル('いぬ.png', [9]))
+    await buttons()[1]!.trigger('click')
+    await chooseImage(imageFile('いぬ.png', [9]))
 
-    expect(JSON.stringify(本体().getJSON())).toBe(まえの本文)
+    expect(JSON.stringify(editorOf().getJSON())).toBe(bodyBefore)
   })
 })
 
 describe('#4 インスタンスを消すと、置かれていた参照についてアラートが出る', () => {
   it('表示名と、本文に残っている箇所数が出る', async () => {
-    await 起動()
-    await 画像を選ぶ(画像ファイル('ねこ.png', [1]))
-    const ボタン = () => 素材の行()[0]!.findAll('button')
-    await ボタン()[0]!.trigger('click') // 挿入
-    await ボタン()[0]!.trigger('click') // もう 1 箇所
+    await mountApp()
+    await chooseImage(imageFile('ねこ.png', [1]))
+    const buttons = () => materialRows()[0]!.findAll('button')
+    await buttons()[0]!.trigger('click') // 挿入
+    await buttons()[0]!.trigger('click') // もう 1 箇所
     await nextTick()
 
-    await ボタン()[2]!.trigger('click') // 「消す」
+    await buttons()[2]!.trigger('click') // 「消す」
     await flushPromises()
     await nextTick()
 
-    const しらせ = wrapper.find('.app__notice')
-    expect(しらせ.exists()).toBe(true)
-    expect(しらせ.text()).toContain('ねこ.png') // ⭐ 何が消えたかが言える（表示名を持つ理由）
-    expect(しらせ.text()).toContain('2 箇所')
+    const notice = wrapper.find('.app__notice')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('ねこ.png') // ⭐ 何が消えたかが言える（表示名を持つ理由）
+    expect(notice.text()).toContain('2 箇所')
 
     // 本文の参照は勝手に消さない。行方不明として見えている（S7-2）
     expect(wrapper.findAll('.part-ref__missing')).toHaveLength(2)
@@ -291,16 +289,16 @@ describe('#4 インスタンスを消すと、置かれていた参照につい�
 describe('#7 リロードしても画像が残る', () => {
   /**
    * ⚠⚠ **読み込みの経路だけで壊れる**型を押さえる。
-   *   起動時の doc は `保存内容の記号を補う()` を通る。そこが段落の中の atom を
+   *   起動時の doc は `restoreHeadingMarksInJson()` を通る。そこが段落の中の atom を
    *   素通しできていないと、**保存したはずの参照が開いた瞬間に消えて、自動保存で確定する**
    *   （P1 で実際に起きたのと同じ形）。
    */
   it('保存された本文の inline 参照と、保存された画像が、起動しただけで揃う', async () => {
     await saveInstance({
       id: 'そざい1',
-      templateId: 画像テンプレID,
-      data: { 表示名: 'ねこ.png' },
-      images: { 画像: new Blob([new Uint8Array([4, 2])], { type: 'image/png' }) },
+      templateId: IMAGE_TEMPLATE_ID,
+      data: { caption: 'ねこ.png' },
+      images: { image: new Blob([new Uint8Array([4, 2])], { type: 'image/png' }) },
     })
     await saveDocument({
       type: 'doc',
@@ -309,23 +307,64 @@ describe('#7 リロードしても画像が残る', () => {
           type: 'paragraph',
           content: [
             { type: 'text', text: 'まえ' },
-            { type: PART_REF_INLINE_NODE, attrs: { instanceId: 'そざい1', partId: '画像' } },
+            { type: PART_REF_INLINE_NODE, attrs: { instanceId: 'そざい1', partId: 'image' } },
             { type: 'text', text: 'あと' },
           ],
         },
       ],
     })
 
-    await 起動()
+    await mountApp()
 
     // 参照が本文に残っている（開いた瞬間に消えていない）
-    const refs = collectPlacedRefs(本体().state.doc)
-    expect(refs.map((r) => `${r.instanceId}/${r.partId}`)).toEqual(['そざい1/画像'])
+    const refs = collectPlacedRefs(editorOf().state.doc)
+    expect(refs.map((r) => `${r.instanceId}/${r.partId}`)).toEqual(['そざい1/image'])
     // 行方不明ではなく、画像として描かれている（＝ Blob が読み戻せている）
     expect(wrapper.findAll('.part-ref__missing')).toHaveLength(0)
     expect(wrapper.findAll('.part-ref__image')).toHaveLength(1)
     expect(wrapper.find('.part-ref__image').attributes('alt')).toBe('ねこ.png')
     // 素材一覧にも並ぶ（配置済みなので未配置は 0 件）
-    expect(素材の一覧().text()).toContain('未配置 0 件')
+    expect(materialPane().text()).toContain('未配置 0 件')
+  })
+})
+
+/**
+ * ⚠⚠ 識別子の英語化（DESIGN §1-8）より **前に保存された本文と素材** を開く経路。
+ *
+ *   改名した名前は 2 箇所に保存されている——素材側のキー（`表示名` / `画像`）と、
+ *   **本文側の `partRef` の `partId`（`画像`）**。片方だけ直すと、
+ *   置いた画像が全部「行方不明のパート」になり「未配置 N 件」も一緒に化ける。
+ *   ⚠ これは各層の単体テストでは 1 件も赤くならない（保存済みデータを通らないため）。
+ */
+describe('英語化する前に保存された本文と素材を開く', () => {
+  it('旧 partId・旧キーで保存されていても、画像として描かれ、未配置も正しい', async () => {
+    await saveInstance({
+      id: 'そざい1',
+      templateId: IMAGE_TEMPLATE_ID,
+      data: { 表示名: 'ねこ.png' },
+      images: { 画像: new Blob([new Uint8Array([4, 2])], { type: 'image/png' }) },
+    } as unknown as TemplateInstance)
+    await saveDocument({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'まえ' },
+            // ⚠ 旧実装が実際に書いていた形（partId が日本語）
+            { type: PART_REF_INLINE_NODE, attrs: { instanceId: 'そざい1', partId: '画像' } },
+          ],
+        },
+      ],
+    })
+
+    await mountApp()
+
+    expect(wrapper.findAll('.part-ref__missing')).toHaveLength(0)
+    expect(wrapper.findAll('.part-ref__image')).toHaveLength(1)
+    expect(wrapper.find('.part-ref__image').attributes('alt')).toBe('ねこ.png')
+    expect(materialPane().text()).toContain('未配置 0 件')
+    // 参照は現行の partId になっている（旧名は上の層へ流さない）
+    expect(collectPlacedRefs(editorOf().state.doc).map((r) => r.partId)).toEqual(['image'])
   })
 })

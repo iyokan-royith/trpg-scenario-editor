@@ -3,7 +3,7 @@ import { MarkdownParser, MarkdownSerializer } from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Slice } from '@tiptap/pm/model'
 import { documentSchema } from './schema'
-import { 記号を補う, 記号の長さ } from './heading'
+import { restoreHeadingMarks, markLength } from './heading'
 
 /**
  * md の入出力。
@@ -123,13 +123,13 @@ export const markdownSerializer = new MarkdownSerializer(
      */
     heading(state, node) {
       const text = node.textContent
-      const 長さ = 記号の長さ(text)
-      // ⚠ 記号が無い見出しはここへ来ない（docToMd の入口で `記号を補う` を通している）。
+      const length = markLength(text)
+      // ⚠ 記号が無い見出しはここへ来ない（docToMd の入口で `restoreHeadingMarks` を通している）。
       //   ⚠⚠ **ここで attrs から補う分岐を持たせない。** 以前それを持っていたせいで、
       //   同じ doc に対して md だけが「見出しとして出す」と答え、ツリーと編集は別の答えを出していた。
       //   記号が無い heading をどう解釈するかは `heading.ts` の 1 箇所だけが決める。
-      state.write(text.slice(0, 長さ))
-      state.renderInline(node.copy(node.content.cut(長さ)), false)
+      state.write(text.slice(0, length))
+      state.renderInline(node.copy(node.content.cut(length)), false)
       state.closeBlock(node)
     },
     horizontalRule(state, node) {
@@ -207,7 +207,7 @@ export const markdownSerializer = new MarkdownSerializer(
 export function mdToDoc(markdown: string, schema: Schema = documentSchema): PMNode {
   const doc = parserFor(schema).parse(markdown)
   if (!doc) throw new Error('md を解釈できませんでした')
-  return 記号を補う(doc)
+  return restoreHeadingMarks(doc)
 }
 
 /**
@@ -218,7 +218,7 @@ export function mdToDoc(markdown: string, schema: Schema = documentSchema): PMNo
  *   ツリーは落とす**という食い違いが復活する（3巡目監査の差し戻し）。
  */
 export function docToMd(doc: PMNode): string {
-  return markdownSerializer.serialize(記号を補う(doc))
+  return markdownSerializer.serialize(restoreHeadingMarks(doc))
 }
 
 /**

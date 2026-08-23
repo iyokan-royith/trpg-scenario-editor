@@ -7,16 +7,19 @@ import {
   type TemplateDefinition,
   type TemplateInstance,
 } from '../template/model'
-import { 同梱テンプレを読む } from '../template/loader'
-import { 画像キー, 表示名キー } from '../template/render/image'
+import { readBundledTemplates } from '../template/loader'
+import { IMAGE_KEY, CAPTION_KEY, IMAGE_TEMPLATE_ID } from '../template/render/image'
 
-/** 同梱テンプレート「画像」の id。⚠ 綴りの真実は `src/templates/image.json` 側。 */
-export const 画像テンプレID = 'builtin.image'
+/**
+ * ⚠ 実体は `template/render/image.ts` へ移した（同梱 JSON と対になるキー名を持つのと同じ場所）。
+ *   ここからの re-export は、これまでどおり store 経由で参照できるようにするためだけのもの。
+ */
+export { IMAGE_TEMPLATE_ID }
 
-let 連番 = 0
-function 新しいID(接頭辞: string): string {
-  連番 += 1
-  return `${接頭辞}-${Date.now().toString(36)}-${連番}`
+let sequence = 0
+function newId(prefix: string): string {
+  sequence += 1
+  return `${prefix}-${Date.now().toString(36)}-${sequence}`
 }
 
 /**
@@ -70,20 +73,20 @@ export const usePartStore = defineStore('parts', () => {
    * 同梱テンプレを登録する。⚠ 壊れていれば例外が飛ぶ（呼び手が利用者へ見せる）。
    * 冪等（同じ id を上書きするだけ）なので、何度呼んでもよい。
    */
-  function 同梱テンプレを登録する() {
-    for (const def of 同梱テンプレを読む()) registerDefinition(def)
+  function registerBundledTemplates() {
+    for (const def of readBundledTemplates()) registerDefinition(def)
   }
 
   /**
    * 画像を 1 枚追加する。
    * ⚠ **UI にテンプレートであることを見せないだけで、内部では普通のインスタンス 1 件**（1-7-2）。
    */
-  function 画像を追加する(file: Blob, 表示名: string): TemplateInstance {
+  function addImage(file: Blob, caption: string): TemplateInstance {
     const instance: TemplateInstance = {
-      id: 新しいID('画像'),
-      templateId: 画像テンプレID,
-      data: { [表示名キー]: 表示名 },
-      images: { [画像キー]: file },
+      id: newId('image'),
+      templateId: IMAGE_TEMPLATE_ID,
+      data: { [CAPTION_KEY]: caption },
+      images: { [IMAGE_KEY]: file },
     }
     upsertInstance(instance)
     return instance
@@ -95,10 +98,10 @@ export const usePartStore = defineStore('parts', () => {
    *   （保存の責務をストアへ持ち込むと、テストのたびに IndexedDB が要る）。
    * @returns 差し替え後のインスタンス。対象が無ければ undefined
    */
-  function 画像を差し替える(instanceId: string, file: Blob): TemplateInstance | undefined {
+  function replaceImage(instanceId: string, file: Blob): TemplateInstance | undefined {
     const instance = instances.value[instanceId]
     if (!instance) return undefined
-    instance.images = { ...instance.images, [画像キー]: file }
+    instance.images = { ...instance.images, [IMAGE_KEY]: file }
     return instance
   }
 
@@ -112,8 +115,8 @@ export const usePartStore = defineStore('parts', () => {
     registerDefinition,
     upsertInstance,
     removeInstance,
-    同梱テンプレを登録する,
-    画像を追加する,
-    画像を差し替える,
+    registerBundledTemplates,
+    addImage,
+    replaceImage,
   }
 })

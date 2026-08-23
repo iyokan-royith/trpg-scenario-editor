@@ -19,7 +19,7 @@ import {
   CURRENT_DOCUMENT_KEY,
 } from '../persistence'
 
-const 書きかけ = {
+const draft = {
   type: 'doc',
   content: [
     { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'あかしょう' }] },
@@ -44,46 +44,46 @@ describe('P1-6: 保存と読み戻し', () => {
   })
 
   it('保存した doc がそのまま読み戻せる', async () => {
-    await saveDocument(書きかけ)
+    await saveDocument(draft)
     const found = await loadDocument()
     expect(found).not.toBeNull()
     expect(found!.key).toBe(CURRENT_DOCUMENT_KEY)
-    expect(found!.doc).toEqual(書きかけ)
+    expect(found!.doc).toEqual(draft)
     expect(found!.updatedAt).toBeGreaterThan(0)
   })
 
   it('⭐ リロード相当（エディタを捨てて作り直す）で内容が残る', async () => {
-    const 一台目 = new Editor({ extensions: documentExtensions, content: 書きかけ })
-    一台目.commands.insertContentAt(一台目.state.doc.content.size, {
+    const firstTab = new Editor({ extensions: documentExtensions, content: draft })
+    firstTab.commands.insertContentAt(firstTab.state.doc.content.size, {
       type: 'paragraph',
       content: [{ type: 'text', text: 'あとから書いた行' }],
     })
-    const 保存前 = 一台目.getJSON()
-    await saveDocument(保存前)
-    一台目.destroy()
+    const beforeSave = firstTab.getJSON()
+    await saveDocument(beforeSave)
+    firstTab.destroy()
 
     // ここでページを閉じたことにする
-    const 復元 = await loadDocument()
-    editor = new Editor({ extensions: documentExtensions, content: 復元!.doc as object })
+    const restored = await loadDocument()
+    editor = new Editor({ extensions: documentExtensions, content: restored!.doc as object })
 
-    expect(editor.getJSON()).toEqual(保存前)
+    expect(editor.getJSON()).toEqual(beforeSave)
     expect(editor.state.doc.textContent).toContain('あとから書いた行')
   })
 
   it('同じキーへの保存は上書きになる（履歴を溜めない）', async () => {
     await saveDocument({ type: 'doc', content: [] })
-    await saveDocument(書きかけ)
-    expect((await loadDocument())!.doc).toEqual(書きかけ)
+    await saveDocument(draft)
+    expect((await loadDocument())!.doc).toEqual(draft)
   })
 })
 
 describe('P1-6: 自動保存', () => {
   it('連続した変更をまとめて 1 回書く（flush で確定できる）', async () => {
-    let 呼ばれた回数 = 0
+    let callCount = 0
     const saver = createAutoSaver({
       getDoc: () => {
-        呼ばれた回数 += 1
-        return 書きかけ
+        callCount += 1
+        return draft
       },
       delay: 10,
     })
@@ -92,8 +92,8 @@ describe('P1-6: 自動保存', () => {
     saver.schedule()
     await saver.flush()
 
-    expect(呼ばれた回数).toBe(1)
-    expect((await loadDocument())!.doc).toEqual(書きかけ)
+    expect(callCount).toBe(1)
+    expect((await loadDocument())!.doc).toEqual(draft)
     saver.stop()
   })
 

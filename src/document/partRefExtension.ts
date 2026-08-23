@@ -7,7 +7,7 @@ export const PART_REF_NODE = 'partRef'
 export const PART_REF_INLINE_NODE = 'partRefInline'
 
 /** 参照ノードの共通部分。⚠ block 版と inline 版で**属性の形を分けない**（走査も突き合わせも同じ）。 */
-const 参照の属性 = () => ({
+const refAttributes = () => ({
   instanceId: { default: null },
   partId: { default: null },
 })
@@ -27,7 +27,7 @@ export const PartRef = Node.create({
   selectable: true,
   draggable: true,
 
-  addAttributes: 参照の属性,
+  addAttributes: refAttributes,
 
   parseHTML() {
     return [{ tag: 'div[data-part-ref]' }]
@@ -45,8 +45,8 @@ export const PartRef = Node.create({
 /**
  * 段落の**中**に置ける参照（インライン版・DESIGN 1-6-3 / 1-7-3）。
  *
- * ⚠⚠ **block 版を置き換えるものではない。** 形態 `独立章` はブロックとして置かれ、
- *   `本文中`（画像を含む）はこちらで置かれる。両方が同時に存在する。
+ * ⚠⚠ **block 版を置き換えるものではない。** 形態 `section` はブロックとして置かれ、
+ *   `inline`（画像を含む）はこちらで置かれる。両方が同時に存在する。
  *
  * ⚠ 「単独で 1 ブロックを占める画像」も**このノードを空の段落に置く**ことで表す。
  *   深さと同じで、**単独行かどうかは「何を置いたか」ではなく「どこに置いたか」の属性**である。
@@ -64,7 +64,7 @@ export const PartRefInline = Node.create({
   selectable: true,
   draggable: true,
 
-  addAttributes: 参照の属性,
+  addAttributes: refAttributes,
 
   parseHTML() {
     return [{ tag: 'span[data-part-ref-inline]' }]
@@ -82,8 +82,8 @@ export const PartRefInline = Node.create({
   },
 })
 
-/** そのノードが参照ノードか（block / inline を問わない）。 */
-export function 参照ノードか(node: PMNode): boolean {
+/** そのノードがisPartRefNode（block / inline を問わない）。 */
+export function isPartRefNode(node: PMNode): boolean {
   return node.type.name === PART_REF_NODE || node.type.name === PART_REF_INLINE_NODE
 }
 
@@ -94,6 +94,38 @@ export interface PlacedRef {
 }
 
 /**
+ * 保存された doc の **JSON のまま**、置かれている参照を付け替える。
+ *
+ * ⚠ 何へ付け替えるかは呼び手が決める（この層はパートの中身も素材の種類も知らない）。
+ *   `remap` が null を返した参照は 1 文字も触らない。
+ *
+ * ⚠ JSON を受けて JSON を返すのは意図的。`Node` にすると呼び手が Editor へ渡したくなるが、
+ *   Editor は自分の Schema を別に持っていて、別スキーマのノードは黙って捨てられる
+ *   （`heading.ts` の `restoreHeadingMarksInJson` と同じ理由）。
+ */
+export function remapPartRefsInJson(
+  json: unknown,
+  remap: (ref: { instanceId: string; partId: string }) => { partId: string } | null,
+): unknown {
+  if (Array.isArray(json)) return json.map((child) => remapPartRefsInJson(child, remap))
+  if (typeof json !== 'object' || json === null) return json
+
+  const node = json as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(node)) {
+    out[key] = key === 'attrs' ? value : remapPartRefsInJson(value, remap)
+  }
+
+  const isRef = node.type === PART_REF_NODE || node.type === PART_REF_INLINE_NODE
+  const attrs = node.attrs as Record<string, unknown> | undefined
+  if (isRef && attrs && typeof attrs.instanceId === 'string' && typeof attrs.partId === 'string') {
+    const next = remap({ instanceId: attrs.instanceId, partId: attrs.partId })
+    if (next) out.attrs = { ...attrs, partId: next.partId }
+  }
+  return out
+}
+
+/**
  * ドキュメントを走査して、置かれている参照を全部集める。
  * ⚠ **block 版と inline 版の両方を拾う。** 片方だけを見ると
  *   「未配置 N 件」も dangling 検出も、その形態の参照に対してだけ黙って外れる。
@@ -101,7 +133,7 @@ export interface PlacedRef {
 export function collectPlacedRefs(doc: PMNode): PlacedRef[] {
   const found: PlacedRef[] = []
   doc.descendants((node, pos) => {
-    if (!参照ノードか(node)) return
+    if (!isPartRefNode(node)) return
     found.push({
       instanceId: String(node.attrs.instanceId),
       partId: String(node.attrs.partId),

@@ -17,18 +17,18 @@ import { createDocumentEditor } from '../editor'
 let editor: Editor
 
 /** 入力規則を通す経路で 1 文字ずつ打つ（ProseMirror のテキスト入力と同じ道）。 */
-function 打つ(text: string) {
+function typeText(text: string) {
   for (const char of text) {
     const { state, view } = editor
     const { from, to } = state.selection
     // 第 5 引数は「規則が何もしなかったときの既定のトランザクション」を作る関数（本物と同じ形）
-    const 既定 = () => state.tr.insertText(char, from, to)
-    const handled = view.someProp('handleTextInput', (f) => f(view, from, to, char, 既定))
-    if (!handled) view.dispatch(既定())
+    const fallback = () => state.tr.insertText(char, from, to)
+    const handled = view.someProp('handleTextInput', (f) => f(view, from, to, char, fallback))
+    if (!handled) view.dispatch(fallback())
   }
 }
 
-function ブロックの種類(): string[] {
+function blockKinds(): string[] {
   const out: string[] = []
   editor.state.doc.forEach((node) => out.push(node.type.name))
   return out
@@ -50,50 +50,50 @@ afterEach(() => {
  */
 describe('P1-1: 見出し記号を打つと見出しになるが、記号は残る', () => {
   it('⭐ 「## 」を打つと見出しになり、記号は本文に残っている', () => {
-    打つ('## みだし')
+    typeText('## みだし')
     // ⚠ 末尾の空段落は StarterKit の TrailingNode（見出しの後ろに書けるようにする）。
-    expect(ブロックの種類()).toEqual(['heading', 'paragraph'])
+    expect(blockKinds()).toEqual(['heading', 'paragraph'])
     expect(editor.state.doc.child(0).attrs.level).toBe(2)
     // ⭐ ここが改訂の中身。記号が消えたら「勝手に消された」ことになる
     expect(editor.state.doc.textContent).toBe('## みだし')
   })
 
   it('「# 」なら level 1 になる', () => {
-    打つ('# おおみだし')
+    typeText('# おおみだし')
     expect(editor.state.doc.child(0).attrs.level).toBe(1)
     expect(editor.state.doc.textContent).toBe('# おおみだし')
   })
 
   it('⭐ 記号を消すと段落に戻る', () => {
-    打つ('## みだし')
-    expect(ブロックの種類()[0]).toBe('heading')
+    typeText('## みだし')
+    expect(blockKinds()[0]).toBe('heading')
     // 記号 3 文字（`## `）を消す
     editor.view.dispatch(editor.state.tr.delete(1, 4))
-    expect(ブロックの種類()[0]).toBe('paragraph')
+    expect(blockKinds()[0]).toBe('paragraph')
     expect(editor.state.doc.textContent).toBe('みだし')
   })
 
   it('⭐ 記号を足すとレベルが変わる（メタデータをテキストとして編集できる）', () => {
-    打つ('## みだし')
+    typeText('## みだし')
     editor.view.dispatch(editor.state.tr.insertText('#', 1, 1))
     expect(editor.state.doc.child(0).attrs.level).toBe(3)
     expect(editor.state.doc.textContent).toBe('### みだし')
   })
 
   it('記号でない先頭文字は段落のまま（陰性対照）', () => {
-    打つ('ふつうの本文')
-    expect(ブロックの種類()).toEqual(['paragraph'])
+    typeText('ふつうの本文')
+    expect(blockKinds()).toEqual(['paragraph'])
     expect(editor.state.doc.textContent).toBe('ふつうの本文')
   })
 
   it('スペースが無ければ見出しにしない（陰性対照・`#タグ` を壊さない）', () => {
-    打つ('#タグ')
-    expect(ブロックの種類()).toEqual(['paragraph'])
+    typeText('#タグ')
+    expect(blockKinds()).toEqual(['paragraph'])
   })
 
   it('`#` が 7 つ以上なら見出しにしない（陰性対照）', () => {
-    打つ('####### ななつ')
-    expect(ブロックの種類()).toEqual(['paragraph'])
+    typeText('####### ななつ')
+    expect(blockKinds()).toEqual(['paragraph'])
   })
 })
 
@@ -117,7 +117,7 @@ describe('P1-4: 貼り付け経路が md をブロックに分解する', () => 
     )!
     view.dispatch(view.state.tr.replaceSelection(slice))
 
-    expect(ブロックの種類()).toEqual(['heading', 'paragraph', 'bulletList', 'paragraph'])
+    expect(blockKinds()).toEqual(['heading', 'paragraph', 'bulletList', 'paragraph'])
     expect(editor.state.doc.child(0).attrs.level).toBe(1)
   })
 })

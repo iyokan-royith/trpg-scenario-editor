@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { Editor } from '@tiptap/vue-3'
 import { documentExtensions } from '../schema'
-import { 見出し記号, 記号の長さ } from '../heading'
+import { headingMark, markLength } from '../heading'
 import { outline, flattenOutline } from '../outline'
 import { PART_REF_INLINE_NODE, PART_REF_NODE } from '../partRefExtension'
 import {
@@ -16,19 +16,19 @@ import {
   type TemplateInstance,
 } from '../../template/model'
 
-const 定義: TemplateDefinition = {
+const definition: TemplateDefinition = {
   id: 'ぶんぼうぐ',
   name: 'ぶんぼうぐテンプレ',
   version: '0.1.0',
   fields: [],
   outputs: [
-    { key: 'まえおき', kind: '固定', label: 'まえおき', form: '独立章' },
-    { key: 'ひきだし', kind: '配列ごと', source: 'ひきだし', label: 'ひきだし', form: '独立章' },
-    { key: 'ずかい', kind: '固定', label: 'ずかい', form: '図' },
+    { key: 'まえおき', kind: 'fixed', label: 'まえおき', form: 'section' },
+    { key: 'ひきだし', kind: 'perItem', source: 'ひきだし', label: 'ひきだし', form: 'section' },
+    { key: 'ずかい', kind: 'fixed', label: 'ずかい', form: 'figure' },
   ],
 }
 
-const インスタンス: TemplateInstance = {
+const instance: TemplateInstance = {
   id: 'i1',
   templateId: 'ぶんぼうぐ',
   images: {},
@@ -42,9 +42,9 @@ const インスタンス: TemplateInstance = {
   },
 }
 
-const parts: Part[] = derivePartsOf(インスタンス, 定義)
+const parts: Part[] = derivePartsOf(instance, definition)
 
-function 参照(partId: string) {
+function makeRef(partId: string) {
   return { type: PART_REF_NODE, attrs: { instanceId: 'i1', partId } }
 }
 
@@ -52,15 +52,15 @@ function 参照(partId: string) {
  * ⚠ 2026-08-23 の CONCEPT Q2 改訂で、**見出し記号は本物のテキストとして本文に入る**。
  *   フィクスチャも記号を含む形にする（＝これが新しい仕様。テストを甘くしたのではない）。
  */
-function 見出し(level: number, text: string) {
+function heading(level: number, text: string) {
   return {
     type: 'heading',
     attrs: { level },
-    content: [{ type: 'text', text: 見出し記号(level) + text }],
+    content: [{ type: 'text', text: headingMark(level) + text }],
   }
 }
 
-function 段落(text: string) {
+function paragraph(text: string) {
   return { type: 'paragraph', content: [{ type: 'text', text }] }
 }
 
@@ -72,12 +72,12 @@ beforeEach(() => {
     content: {
       type: 'doc',
       content: [
-        見出し(1, 'だいいちしょう'),
-        段落('てがきの本文'),
-        見出し(2, 'せつ'),
-        参照('ひきだし:h1'), // 独立章 → ツリーに出る
-        参照('ずかい'), // 図 → ツリーに出ない
-        見出し(1, 'だいにしょう'),
+        heading(1, 'だいいちしょう'),
+        paragraph('てがきの本文'),
+        heading(2, 'せつ'),
+        makeRef('ひきだし:h1'), // 独立chapter → treeOfに出る
+        makeRef('ずかい'), // 図 → treeOfに出ない
+        heading(1, 'だいにしょう'),
       ],
     },
   })
@@ -91,14 +91,14 @@ describe('P1-2: ツリーは doc から導出される（別データを持た�
   })
 
   it('本文を編集するとツリーが追従する（ツリー側を触っていない）', () => {
-    const 見出しの位置 = 0
-    const node = editor.state.doc.nodeAt(見出しの位置)!
+    const headingPos = 0
+    const node = editor.state.doc.nodeAt(headingPos)!
     // 記号のうしろ（題名の部分）だけを書き換える
     editor.view.dispatch(
       editor.state.tr.insertText(
         'かきかえ',
-        見出しの位置 + 1 + 記号の長さ(node.textContent),
-        見出しの位置 + node.nodeSize - 1,
+        headingPos + 1 + markLength(node.textContent),
+        headingPos + node.nodeSize - 1,
       ),
     )
     expect(outline(editor.state.doc, parts)[0]!.title).toBe('かきかえ')
@@ -106,7 +106,7 @@ describe('P1-2: ツリーは doc から導出される（別データを持た�
 
   it('⭐ 記号を消すと見出しでなくなり、ツリーから消える（完了条件 #1 の後半）', () => {
     const node = editor.state.doc.nodeAt(0)!
-    editor.view.dispatch(editor.state.tr.delete(1, 1 + 記号の長さ(node.textContent)))
+    editor.view.dispatch(editor.state.tr.delete(1, 1 + markLength(node.textContent)))
     expect(outline(editor.state.doc, parts).map((i) => i.title)).not.toContain('だいいちしょう')
   })
 
@@ -136,10 +136,10 @@ describe('P1-契約: outline は doc だけでは作れない（parts を受け�
       'ひきだし けしごむ',
       'だいにしょう',
     ])
-    const 参照項目 = flat.find((i) => i.kind === 'パート参照')!
-    expect(参照項目.title).toBe('ひきだし けしごむ')
+    const refItem = flat.find((i) => i.kind === 'partRef')!
+    expect(refItem.title).toBe('ひきだし けしごむ')
     // 深さは「どこに置いたか」で決まる（囲っている見出し level 2 の 1 つ下）
-    expect(参照項目.level).toBe(3)
+    expect(refItem.level).toBe(3)
   })
 
   it('doc 側には見出し文字列が入っていない（キャッシュしていないことの裏取り）', () => {
@@ -150,40 +150,50 @@ describe('P1-契約: outline は doc だけでは作れない（parts を受け�
     // DESIGN 1-6-5 のカノニカルケース（配列 1 件ごとに独立章を生む宣言）はこの形。
     // ⚠ 深さは「どこに置いたか」で決まる（DESIGN 1-6-3）。
     //   「何番目に置いたか」で決まってはいけない（＝階段になってはいけない）。
-    const 連続 = new Editor({
+    const consecutive = new Editor({
       extensions: documentExtensions,
       content: {
         type: 'doc',
-        content: [見出し(1, 'しょう'), 参照('まえおき'), 参照('ひきだし:h1'), 参照('ひきだし:h2')],
+        content: [
+          heading(1, 'しょう'),
+          makeRef('まえおき'),
+          makeRef('ひきだし:h1'),
+          makeRef('ひきだし:h2'),
+        ],
       },
     })
-    const tree = outline(連続.state.doc, parts)
-    連続.destroy()
+    const tree = outline(consecutive.state.doc, parts)
+    consecutive.destroy()
 
     expect(tree).toHaveLength(1)
-    const 章 = tree[0]!
+    const chapter = tree[0]!
     // ⭐ root の children 数で照合する（階段になっていると 1 個に潰れる）
-    expect(章.children).toHaveLength(3)
-    expect(章.children.map((i) => i.title)).toEqual([
+    expect(chapter.children).toHaveLength(3)
+    expect(chapter.children.map((i) => i.title)).toEqual([
       'まえおき',
       'ひきだし けしごむ',
       'ひきだし ものさし',
     ])
-    expect(章.children.map((i) => i.level)).toEqual([2, 2, 2])
+    expect(chapter.children.map((i) => i.level)).toEqual([2, 2, 2])
     // 互いに入れ子になっていない
-    expect(章.children.every((i) => i.children.length === 0)).toBe(true)
+    expect(chapter.children.every((i) => i.children.length === 0)).toBe(true)
   })
 
   it('⭐ 見出しを挟むと、パート参照の深さはその見出しに従う（位置で決まる）', () => {
-    const 混在 = new Editor({
+    const mixed = new Editor({
       extensions: documentExtensions,
       content: {
         type: 'doc',
-        content: [見出し(1, 'しょう'), 参照('ひきだし:h1'), 見出し(2, 'せつ'), 参照('ひきだし:h2')],
+        content: [
+          heading(1, 'しょう'),
+          makeRef('ひきだし:h1'),
+          heading(2, 'せつ'),
+          makeRef('ひきだし:h2'),
+        ],
       },
     })
-    const flat = flattenOutline(outline(混在.state.doc, parts))
-    混在.destroy()
+    const flat = flattenOutline(outline(mixed.state.doc, parts))
+    mixed.destroy()
 
     expect(flat.map((i) => [i.title, i.level])).toEqual([
       ['しょう', 1],
@@ -194,8 +204,8 @@ describe('P1-契約: outline は doc だけでは作れない（parts を受け�
   })
 
   it('データ側から消えたパートはツリーに出ない（dangling の判定は analyzePlacement の責務）', () => {
-    const 減った = parts.filter((p) => p.partId !== 'ひきだし:h1')
-    const titles = flattenOutline(outline(editor.state.doc, 減った)).map((i) => i.title)
+    const fewerParts = parts.filter((p) => p.partId !== 'ひきだし:h1')
+    const titles = flattenOutline(outline(editor.state.doc, fewerParts)).map((i) => i.title)
     expect(titles).not.toContain('ひきだし けしごむ')
   })
 })
@@ -227,10 +237,10 @@ describe('P1-2 改訂: ツリーには記号を出さない（記号を剥がす
  *   block 版と同じ結果になることを直接当てる。
  */
 describe('P2: 走査は inline 版の参照も対象にする', () => {
-  function ツリー(参照ノード: object) {
+  function treeOf(node: object) {
     const ed = new Editor({
       extensions: documentExtensions,
-      content: { type: 'doc', content: [見出し(1, 'しょう'), 参照ノード] },
+      content: { type: 'doc', content: [heading(1, 'しょう'), node] },
     })
     const flat = flattenOutline(outline(ed.state.doc, parts))
     ed.destroy()
@@ -238,15 +248,15 @@ describe('P2: 走査は inline 版の参照も対象にする', () => {
   }
 
   it('独立章のパートを段落の中に置いても、ブロックで置いたのと同じ項目が出る', () => {
-    const block = ツリー(参照('まえおき'))
-    const inline = ツリー({
+    const block = treeOf(makeRef('まえおき'))
+    const inline = treeOf({
       type: 'paragraph',
       content: [{ type: PART_REF_INLINE_NODE, attrs: { instanceId: 'i1', partId: 'まえおき' } }],
     })
 
     expect(block.map((i) => [i.kind, i.title, i.level])).toEqual([
-      ['見出し', 'しょう', 1],
-      ['パート参照', 'まえおき', 2],
+      ['heading', 'しょう', 1],
+      ['partRef', 'まえおき', 2],
     ])
     expect(inline.map((i) => [i.kind, i.title, i.level])).toEqual(
       block.map((i) => [i.kind, i.title, i.level]),
@@ -254,10 +264,10 @@ describe('P2: 走査は inline 版の参照も対象にする', () => {
   })
 
   it('本文中のパート（画像など）はツリーに出ない（章ではないため・1-7-3）', () => {
-    const 図の参照 = {
+    const figureRef = {
       type: 'paragraph',
       content: [{ type: PART_REF_INLINE_NODE, attrs: { instanceId: 'i1', partId: 'ずかい' } }],
     }
-    expect(ツリー(図の参照).map((i) => i.kind)).toEqual(['見出し'])
+    expect(treeOf(figureRef).map((i) => i.kind)).toEqual(['heading'])
   })
 })

@@ -16,12 +16,12 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/vue-3'
 import { documentExtensions, documentSchema } from '../schema'
-import { 保存内容の記号を補う, 記号を補う } from '../heading'
+import { restoreHeadingMarksInJson, restoreHeadingMarks } from '../heading'
 import { outline } from '../outline'
 import { docToMd } from '../markdown'
 
 /** 旧版が保存していた形（記号が本文に無く、レベルは attrs にしかない）。 */
-const 旧版の内容 = {
+const legacyContent = {
   type: 'doc',
   content: [
     { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'まえがき' }] },
@@ -30,19 +30,19 @@ const 旧版の内容 = {
   ],
 }
 
-function 旧版のdoc() {
-  return documentSchema.nodeFromJSON(旧版の内容)
+function legacyDoc() {
+  return documentSchema.nodeFromJSON(legacyContent)
 }
 
-describe('記号を補う（入口の不変条件）', () => {
+describe('restoreHeadingMarks（入口の不変条件）', () => {
   it('記号の無い見出しに、attrs のレベルから記号を起こす', () => {
-    const 直した = 記号を補う(旧版のdoc())
-    expect(直した.child(0).textContent).toBe('# まえがき')
-    expect(直した.child(2).textContent).toBe('## そのいち')
+    const fixed = restoreHeadingMarks(legacyDoc())
+    expect(fixed.child(0).textContent).toBe('# まえがき')
+    expect(fixed.child(2).textContent).toBe('## そのいち')
   })
 
   it('段落には手を出さない', () => {
-    expect(記号を補う(旧版のdoc()).child(1).textContent).toBe('ほんぶんです')
+    expect(restoreHeadingMarks(legacyDoc()).child(1).textContent).toBe('ほんぶんです')
   })
 
   it('もう記号がある doc は素通り（同じ実体が返る＝余計な書き換えをしない）', () => {
@@ -52,52 +52,52 @@ describe('記号を補う（入口の不変条件）', () => {
         { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '# あります' }] },
       ],
     })
-    expect(記号を補う(doc)).toBe(doc)
+    expect(restoreHeadingMarks(doc)).toBe(doc)
   })
 
   it('読めない JSON はそのまま返す（開けなくなる方が損）', () => {
-    const こわれもの = { type: 'doc', content: [{ type: 'そんなノードは無い' }] }
-    expect(保存内容の記号を補う(こわれもの, documentSchema)).toBe(こわれもの)
+    const broken = { type: 'doc', content: [{ type: 'そんなノードは無い' }] }
+    expect(restoreHeadingMarksInJson(broken, documentSchema)).toBe(broken)
   })
 
   it('JSON を返す（Editor は別スキーマを持つので、ノードを渡すと黙って捨てられる）', () => {
-    const 直した = 保存内容の記号を補う(旧版の内容, documentSchema) as {
+    const fixed = restoreHeadingMarksInJson(legacyContent, documentSchema) as {
       content: Array<{ content?: Array<{ text: string }> }>
     }
-    expect(直した.content[0]!.content![0]!.text).toBe('# まえがき')
+    expect(fixed.content[0]!.content![0]!.text).toBe('# まえがき')
   })
 })
 
 describe('⭐ 3 つの層が同じ答えを出す（差し戻しの本体）', () => {
-  const 直した = () => 記号を補う(旧版のdoc())
+  const fixed = () => restoreHeadingMarks(legacyDoc())
 
   it('ツリー: 見出しとして出る（以前は黙って落ちていた）', () => {
-    expect(outline(直した()).map((i) => i.title)).toEqual(['まえがき'])
-    expect(outline(直した())[0]!.children.map((i) => i.title)).toEqual(['そのいち'])
+    expect(outline(fixed()).map((i) => i.title)).toEqual(['まえがき'])
+    expect(outline(fixed())[0]!.children.map((i) => i.title)).toEqual(['そのいち'])
   })
 
   it('md: 見出しとして出る（記号は 1 組だけ）', () => {
-    const md = docToMd(直した())
+    const md = docToMd(fixed())
     expect(md).toContain('# まえがき')
     expect(md).toContain('## そのいち')
     expect(md).not.toContain('# # ')
   })
 
   it('編集: 1 文字打っても段落へ降格しない（以前はここで消えた）', () => {
-    const editor = new Editor({ extensions: documentExtensions, content: 直した().toJSON() })
+    const editor = new Editor({ extensions: documentExtensions, content: fixed().toJSON() })
     editor.view.dispatch(editor.state.tr.insertText('あ', editor.state.doc.content.size - 1))
 
-    const 種類: string[] = []
-    editor.state.doc.forEach((n) => 種類.push(n.type.name))
+    const nodeNames: string[] = []
+    editor.state.doc.forEach((n) => nodeNames.push(n.type.name))
     editor.destroy()
-    expect(種類.slice(0, 3)).toEqual(['heading', 'paragraph', 'heading'])
+    expect(nodeNames.slice(0, 3)).toEqual(['heading', 'paragraph', 'heading'])
   })
 
   it('⭐ docToMd に直接渡しても、ツリーと同じ答えになる（層ごとの分岐を持たない）', () => {
     // 入口を通していない生の旧版 doc を、それぞれの層へそのまま渡す
-    const 生 = 旧版のdoc()
-    const mdに出た = docToMd(生).includes('# まえがき')
-    const ツリーに出た = outline(記号を補う(生)).length > 0
-    expect(mdに出た).toBe(ツリーに出た)
+    const raw = legacyDoc()
+    const inMd = docToMd(raw).includes('# まえがき')
+    const inTree = outline(restoreHeadingMarks(raw)).length > 0
+    expect(inMd).toBe(inTree)
   })
 })

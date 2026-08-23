@@ -3,14 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { EditorContent, type Editor } from '@tiptap/vue-3'
 import { createDocumentEditor } from './document/editor'
 import { flattenOutline, outline } from './document/outline'
-import {
-  dropTargetPos,
-  moveSection,
-  setSectionLevel,
-  階層を変えられるか,
-} from './document/sections'
+import { dropTargetPos, moveSection, setSectionLevel, canChangeLevel } from './document/sections'
 import { docToMd, mdToDoc } from './document/markdown'
-import { 保存内容の記号を補う } from './document/heading'
+import { restoreHeadingMarksInJson } from './document/heading'
 import { documentSchema } from './document/schema'
 import OutlinePane from './ui/OutlinePane.vue'
 import MaterialPane from './ui/MaterialPane.vue'
@@ -23,8 +18,14 @@ import {
   saveInstance,
 } from './store/persistence'
 import { analyzePlacement } from './document/placement'
-import { collectPlacedRefs, PART_REF_INLINE_NODE, PART_REF_NODE } from './document/partRefExtension'
-import { partKeyOf, type Part } from './template/model'
+import {
+  collectPlacedRefs,
+  remapPartRefsInJson,
+  PART_REF_INLINE_NODE,
+  PART_REF_NODE,
+} from './document/partRefExtension'
+import { legacyImagePartIdRemap } from './template/render/image'
+import { partKeyOf, type Part, type TemplateInstance } from './template/model'
 
 /**
  * v0 の画面。左に見出しツリー、右に 1 枚の連続文書（CONCEPT Q5）。
@@ -33,13 +34,13 @@ import { partKeyOf, type Part } from './template/model'
  */
 const store = usePartStore()
 const editor = shallowRef<Editor | null>(null)
-const 版 = ref(0) // doc が変わったことをツリーに伝えるためだけの数
-const しらせ = ref('')
+const revision = ref(0) // doc が変わったことをツリーに伝えるためだけの数
+const notice = ref('')
 const md = ref('')
-const mdを開いている = ref(false)
+const mdOpen = ref(false)
 
-const 見出しツリー = computed(() => {
-  void 版.value // 依存を作る（doc は Vue のリアクティブ対象ではないため）
+const headingTree = computed(() => {
+  void revision.value // 依存を作る（doc は Vue のリアクティブ対象ではないため）
   const doc = editor.value?.state.doc
   // ⚠ parts を渡すのが契約（DESIGN 1-6-4）。渡さないと独立章パートの見出しがツリーに出ない。
   return doc ? outline(doc, store.parts) : []
@@ -49,27 +50,29 @@ const 見出しツリー = computed(() => {
  * 配置の突き合わせ（DESIGN 1-5）。⚠ 「配置済みフラグ」をデータ側に持たせない。
  * 本文とパートの現状から**毎回**求める。
  */
-const 配置 = computed(() => {
-  void 版.value
+const placement = computed(() => {
+  void revision.value
   const doc = editor.value?.state.doc
   return doc
     ? analyzePlacement(doc, store.parts)
     : { unplaced: [], dangling: [], duplicated: [] as string[] }
 })
 
-const 未配置キー = computed(() => 配置.value.unplaced.map((p) => partKeyOf(p.instanceId, p.partId)))
+const unplacedKeys = computed(() =>
+  placement.value.unplaced.map((p) => partKeyOf(p.instanceId, p.partId)),
+)
 
-const 画像を選ぶ口 = ref<HTMLInputElement | null>(null)
+const filePicker = ref<HTMLInputElement | null>(null)
 /**
  * ファイルを選び終えたときに「追加」なのか「差し替え」なのかを覚えておく口。
  * ⚠ 追加のときは必ず null に戻す（戻さないと、次の「素材を追加」が差し替えになる）。
  */
-const 差し替え対象 = ref<string | null>(null)
+const replaceTarget = ref<string | null>(null)
 
 const saver = createAutoSaver({
   getDoc: () => editor.value?.getJSON() ?? { type: 'doc', content: [] },
   onError: (error) => {
-    しらせ.value = `保存できませんでした: ${error instanceof Error ? error.message : String(error)}`
+    notice.value = `保存できませんでした: ${error instanceof Error ? error.message : String(error)}`
   },
 })
 
@@ -77,39 +80,48 @@ onMounted(async () => {
   // ⚠ 同梱テンプレも、ユーザーが持ち込む定義とまったく同じ経路（loader.ts）で読む（Q6）。
   //   壊れていれば例外が飛ぶので、黙って「テンプレが 0 件の画面」にはならない。
   try {
-    store.同梱テンプレを登録する()
+    store.registerBundledTemplates()
   } catch (error) {
-    しらせ.value = `同梱テンプレートを読めませんでした: ${
+    notice.value = `同梱テンプレートを読めませんでした: ${
       error instanceof Error ? error.message : String(error)
     }`
   }
+  // ⚠ 本文より**先**に素材を読む。本文側の旧 partId の読み替えに、
+  //   「どれが同梱テンプレ由来のインスタンスか」が要るため（下の remap）。
+  let loadedInstances: TemplateInstance[] = []
   try {
-    for (const instance of await loadInstances()) store.upsertInstance(instance)
+    loadedInstances = await loadInstances()
+    for (const instance of loadedInstances) store.upsertInstance(instance)
   } catch (error) {
-    しらせ.value = `素材を読み出せませんでした: ${
+    notice.value = `素材を読み出せませんでした: ${
       error instanceof Error ? error.message : String(error)
     }`
   }
 
-  let 初期内容: object | undefined
+  let initialContent: object | undefined
   try {
-    const 保存されていたもの = (await loadDocument())?.doc
+    const saved = (await loadDocument())?.doc
     // ⭐⭐ **入口で記号を補う**（`heading.ts` の不変条件）。
     //   旧版（記号を消す方式）が保存した doc には記号の無い見出しが入っており、
     //   そのまま開くと **左ペインから消え、1 文字打った瞬間に段落へ降格して自動保存で確定する**
     //   ＝**利用者の書いたものが黙って失われる**（3巡目監査が実アプリ経路で実測）。
-    初期内容 =
-      保存されていたもの === undefined
+    // ⚠ 併せて、§1-8 の英語化より前に保存された `partId` を読み替える。
+    //   ここを通さないと、置いた画像が全部「行方不明のパート」になる（素材側だけ直しても足りない）。
+    initialContent =
+      saved === undefined
         ? undefined
-        : (保存内容の記号を補う(保存されていたもの, documentSchema) as object)
+        : (restoreHeadingMarksInJson(
+            remapPartRefsInJson(saved, legacyImagePartIdRemap(loadedInstances)),
+            documentSchema,
+          ) as object)
   } catch (error) {
-    しらせ.value = `前回の内容を読み出せませんでした: ${
+    notice.value = `前回の内容を読み出せませんでした: ${
       error instanceof Error ? error.message : String(error)
     }`
   }
 
   editor.value = createDocumentEditor({
-    content: 初期内容 ?? {
+    content: initialContent ?? {
       type: 'doc',
       content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ここに書きはじめる' }] }],
     },
@@ -118,7 +130,7 @@ onMounted(async () => {
     //   **outline(doc, parts) は選択に依存しない**ので、あれは 2 本目の経路でしかなかった。
     //   経路が 2 本あると片方が死んでも検査が鳴らない（陽性対照で実測）ので消した。
     onUpdate: () => {
-      版.value += 1
+      revision.value += 1
       saver.schedule()
     },
   })
@@ -142,22 +154,22 @@ onBeforeUnmount(() => {
  */
 defineExpose({ editor })
 
-function 移動(payload: { 掴んだ: number; 落とした先: number }) {
+function onMove(payload: { grabbed: number; droppedOn: number }) {
   const ed = editor.value
   if (!ed) return
   // 「相手の場所を取る」の意味を doc の挿入位置へ翻訳する（sections.ts の責務）。
-  const dest = dropTargetPos(ed.state.doc, payload.掴んだ, payload.落とした先)
+  const dest = dropTargetPos(ed.state.doc, payload.grabbed, payload.droppedOn)
   if (dest === null) {
-    しらせ.value = 'そこへは移せません'
+    notice.value = 'そこへは移せません'
     return
   }
-  const tr = moveSection(ed.state, payload.掴んだ, dest)
+  const tr = moveSection(ed.state, payload.grabbed, dest)
   if (!tr) {
-    しらせ.value = 'そこへは移せません'
+    notice.value = 'そこへは移せません'
     return
   }
   ed.view.dispatch(tr)
-  しらせ.value = ''
+  notice.value = ''
 }
 
 /**
@@ -167,57 +179,57 @@ function 移動(payload: { 掴んだ: number; 落とした先: number }) {
  *   いま該当するのは「配下の見出しが範囲外へ押し出される」1 つだけで、
  *   これは左ペインを見ても分からない（配下のレベルまでは読み取れない）。
  */
-function 階層変更(payload: { pos: number; level: number }) {
+function onChangeLevel(payload: { pos: number; level: number }) {
   const ed = editor.value
   if (!ed) return
-  const 可否 = 階層を変えられるか(ed.state.doc, payload.pos, payload.level)
-  if (!可否.可) {
-    しらせ.value =
-      可否.理由 === '配下が範囲外へ押し出される'
+  const result = canChangeLevel(ed.state.doc, payload.pos, payload.level)
+  if (!result.ok) {
+    notice.value =
+      result.reason === 'descendantsOutOfRange'
         ? 'この節の中に、これ以上ずらせない見出しがあります'
         : ''
     return
   }
   const tr = setSectionLevel(ed.state, payload.pos, payload.level)
   if (!tr) {
-    しらせ.value = ''
+    notice.value = ''
     return
   }
   ed.view.dispatch(tr)
-  しらせ.value = ''
+  notice.value = ''
 }
 
 /**
  * ドラッグ中の挿入位置ガイド（要望3）。
  * ⭐ **`dropTargetPos()` の値そのものを可視化する。** 判定と別の規則を持たせない。
  */
-const ガイド = ref<number | 'まつび' | null>(null)
+const guide = ref<number | 'end' | null>(null)
 
-function ドラッグ中(payload: { 掴んだ: number; 上に居る: number }) {
+function onDragOver(payload: { grabbed: number; over: number }) {
   const ed = editor.value
   if (!ed) return
-  const dest = dropTargetPos(ed.state.doc, payload.掴んだ, payload.上に居る)
+  const dest = dropTargetPos(ed.state.doc, payload.grabbed, payload.over)
   if (dest === null) {
-    ガイド.value = null
+    guide.value = null
     return
   }
   // 挿入位置（doc 上の境界）を、左ペインのどの項目の手前かに翻訳する。
-  const 次の項目 = flattenOutline(見出しツリー.value).find((item) => item.pos >= dest)
-  ガイド.value = 次の項目 ? 次の項目.pos : 'まつび'
+  const nextItem = flattenOutline(headingTree.value).find((item) => item.pos >= dest)
+  guide.value = nextItem ? nextItem.pos : 'end'
 }
 
-function ドラッグ終了() {
-  ガイド.value = null
+function onDragEnd() {
+  guide.value = null
 }
 
-function 選択(pos: number) {
+function onSelect(pos: number) {
   editor.value?.commands.focus(pos + 1)
 }
 
 /** 「素材を追加」→ ファイルを選ぶ口を開く。⚠ 利用者にテンプレートの存在を見せない（1-7-2）。 */
-function 画像を追加() {
-  差し替え対象.value = null
-  画像を選ぶ口.value?.click()
+function onAddImage() {
+  replaceTarget.value = null
+  filePicker.value?.click()
 }
 
 /**
@@ -225,35 +237,33 @@ function 画像を追加() {
  * ⚠ **本文には一切触らない。** データ側を入れ替えるだけで、置かれている全箇所が同時に変わる
  *   （本文は参照しか持たないので、これが自動的に成り立つ・S7-3）。
  */
-function 素材を差し替え(part: Part) {
-  差し替え対象.value = part.instanceId
-  画像を選ぶ口.value?.click()
+function onReplaceMaterial(part: Part) {
+  replaceTarget.value = part.instanceId
+  filePicker.value?.click()
 }
 
-async function 画像が選ばれた(event: Event) {
+async function onFileChosen(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   // ⚠ 同じファイルを続けて選べるように、値は毎回捨てる（change が飛ばなくなる）。
   input.value = ''
-  const 差し替え先 = 差し替え対象.value
-  差し替え対象.value = null
+  const replaceTo = replaceTarget.value
+  replaceTarget.value = null
   if (!file) return
 
-  const instance = 差し替え先
-    ? store.画像を差し替える(差し替え先, file)
-    : store.画像を追加する(file, file.name)
+  const instance = replaceTo ? store.replaceImage(replaceTo, file) : store.addImage(file, file.name)
   // 差し替え先が既に消えていた場合（一覧を開いたまま別経路で消した等）は何も残さない。
   if (!instance) {
-    しらせ.value = 'その素材はもうありません'
+    notice.value = 'その素材はもうありません'
     return
   }
   try {
     // ⚠ 保存まで含めて 1 つの操作。ここを忘れると、画面では差し替わったのに
     //   リロードで元に戻る（差し替えたつもりのものが黙って巻き戻る）。
     await saveInstance(instance)
-    しらせ.value = ''
+    notice.value = ''
   } catch (error) {
-    しらせ.value = `素材を保存できませんでした: ${
+    notice.value = `素材を保存できませんでした: ${
       error instanceof Error ? error.message : String(error)
     }`
   }
@@ -262,14 +272,14 @@ async function 画像が選ばれた(event: Event) {
 /**
  * 素材を本文へ挿す。
  * ⚠ どのノードで置くかは **パートの形態**が決める（1-7-3）。
- *   `本文中`（画像はこれ）は段落の中に置ける inline 版、`独立章` はブロック版。
+ *   `inline`（画像はこれ）は段落の中に置ける inline 版、`section` はブロック版。
  *   「単独の行にしたい」は**空の段落へ置く**ことで表す＝配置の側の話であって、
  *   パートの側で形を変える話ではない。
  */
-function 素材を挿入(part: Part) {
+function onInsertMaterial(part: Part) {
   const ed = editor.value
   if (!ed) return
-  const type = part.form === '独立章' ? PART_REF_NODE : PART_REF_INLINE_NODE
+  const type = part.form === 'section' ? PART_REF_NODE : PART_REF_INLINE_NODE
   // ⚠ `scrollIntoView: false` は意図的。挿し込むのは**利用者が直前に居た位置**なので、
   //   そこへ自動スクロールし直す必要が無い（画面が跳ねる方が邪魔になる）。
   ed.chain()
@@ -284,25 +294,25 @@ function 素材を挿入(part: Part) {
  *   消した後では表示名がストアから消えていて、「何が行方不明になったか」を言えない。
  *   本文側の参照は**残す**（勝手に本文を書き換えない）。残った参照は「行方不明のパート」として見える。
  */
-async function 素材を削除(part: Part) {
-  const 置かれた数 = 置かれている数(part)
+async function onRemoveMaterial(part: Part) {
+  const placedCount = countPlaced(part)
   store.removeInstance(part.instanceId)
-  版.value += 1
-  しらせ.value =
-    置かれた数 > 0
-      ? `「${part.title}」を消しました。本文に ${置かれた数} 箇所、行方不明の参照が残っています`
+  revision.value += 1
+  notice.value =
+    placedCount > 0
+      ? `「${part.title}」を消しました。本文に ${placedCount} 箇所、行方不明の参照が残っています`
       : `「${part.title}」を消しました`
   try {
     await deleteInstance(part.instanceId)
   } catch (error) {
-    しらせ.value = `素材を消せませんでした: ${
+    notice.value = `素材を消せませんでした: ${
       error instanceof Error ? error.message : String(error)
     }`
   }
 }
 
 /** そのパートが本文に何箇所置かれているか。⚠ 走査は document 層の 1 本を使う（数え方を増やさない）。 */
-function 置かれている数(part: Part): number {
+function countPlaced(part: Part): number {
   const doc = editor.value?.state.doc
   if (!doc) return 0
   const key = partKeyOf(part.instanceId, part.partId)
@@ -310,22 +320,22 @@ function 置かれている数(part: Part): number {
     .length
 }
 
-function md書き出し() {
+function exportMd() {
   const doc = editor.value?.state.doc
   if (!doc) return
   md.value = docToMd(doc)
-  mdを開いている.value = true
+  mdOpen.value = true
 }
 
-function md読み込み() {
+function importMd() {
   const ed = editor.value
   if (!ed) return
   try {
     const doc = mdToDoc(md.value, ed.state.schema)
     ed.commands.setContent(doc.toJSON())
-    しらせ.value = 'md を読み込みました'
+    notice.value = 'md を読み込みました'
   } catch (error) {
-    しらせ.value = `md を読み込めませんでした: ${
+    notice.value = `md を読み込めませんでした: ${
       error instanceof Error ? error.message : String(error)
     }`
   }
@@ -337,21 +347,21 @@ function md読み込み() {
     <header class="app__header">
       <h1>シナリオエディタ</h1>
       <div class="app__actions">
-        <button type="button" @click="md書き出し">md で書き出す</button>
-        <button type="button" :disabled="!mdを開いている" @click="md読み込み">md を読み込む</button>
+        <button type="button" @click="exportMd">md で書き出す</button>
+        <button type="button" :disabled="!mdOpen" @click="importMd">md を読み込む</button>
       </div>
     </header>
-    <p v-if="しらせ" class="app__notice" role="status">{{ しらせ }}</p>
+    <p v-if="notice" class="app__notice" role="status">{{ notice }}</p>
     <div class="app__body">
       <OutlinePane
         class="app__outline"
-        :items="見出しツリー"
-        :ガイド="ガイド"
-        @移動="移動"
-        @階層変更="階層変更"
-        @選択="選択"
-        @ドラッグ中="ドラッグ中"
-        @ドラッグ終了="ドラッグ終了"
+        :items="headingTree"
+        :guide="guide"
+        @move="onMove"
+        @changeLevel="onChangeLevel"
+        @select="onSelect"
+        @dragOver="onDragOver"
+        @dragEnd="onDragEnd"
       />
       <main class="app__editor">
         <EditorContent v-if="editor" :editor="editor" />
@@ -359,23 +369,23 @@ function md読み込み() {
       <MaterialPane
         class="app__materials"
         :parts="store.parts"
-        :未配置キー="未配置キー"
-        @画像を追加="画像を追加"
-        @挿入="素材を挿入"
-        @差し替え="素材を差し替え"
-        @削除="素材を削除"
+        :unplacedKeys="unplacedKeys"
+        @addImage="onAddImage"
+        @insert="onInsertMaterial"
+        @replace="onReplaceMaterial"
+        @remove="onRemoveMaterial"
       />
     </div>
     <!-- ⚠ 見えない口。「素材を追加」のボタンから開く（1-7-2: テンプレートの存在は見せない） -->
     <input
-      ref="画像を選ぶ口"
+      ref="filePicker"
       class="app__file"
       type="file"
       accept="image/*"
       aria-label="画像を選ぶ"
-      @change="画像が選ばれた"
+      @change="onFileChosen"
     />
-    <section v-if="mdを開いている" class="app__md">
+    <section v-if="mdOpen" class="app__md">
       <label for="md">md（書き出した内容。直してから読み込めます）</label>
       <textarea id="md" v-model="md" rows="10"></textarea>
     </section>
@@ -454,7 +464,7 @@ function md読み込み() {
   padding-left: 0.5rem;
   margin-left: -0.75rem;
 }
-.app__editor :deep(.現在のブロック) {
+.app__editor :deep(.current-block) {
   border-left-color: #2b6cb0;
   background: #f4f8fd;
 }
@@ -474,7 +484,7 @@ function md読み込み() {
 }
 
 /* 記号そのものは本物のテキストとして残っている。装飾で淡く見せるだけ。 */
-.app__editor :deep(.見出し記号) {
+.app__editor :deep(.heading-mark) {
   color: #9aa5b1;
   font-family: monospace;
 }

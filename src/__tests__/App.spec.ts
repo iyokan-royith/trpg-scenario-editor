@@ -14,10 +14,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { Editor } from '@tiptap/vue-3'
 import App from '../App.vue'
-import { 見出しの題名, 見出し記号 } from '../document/heading'
+import { headingTitle, headingMark } from '../document/heading'
 import { clearDocument, loadDocument, saveDocument } from '../store/persistence'
 
-async function 起動() {
+async function mountApp() {
   // ⚠ 本物の document に挿さないと `view.hasFocus()` が真にならず、
   //   フォーカス由来の表示（要望1）が 1 度も通らないまま緑になる。
   const wrapper = mount(App, {
@@ -34,7 +34,7 @@ async function 起動() {
   return wrapper
 }
 
-function 本体(wrapper: Awaited<ReturnType<typeof 起動>>): Editor {
+function editorOf(wrapper: Awaited<ReturnType<typeof mountApp>>): Editor {
   const editor = (wrapper.vm as unknown as { editor: Editor | null }).editor
   if (!editor) throw new Error('エディタが立ち上がっていません')
   return editor
@@ -46,14 +46,14 @@ beforeEach(async () => {
 
 describe('App', () => {
   it('起動すると本文と左ペインが出る', async () => {
-    const wrapper = await 起動()
+    const wrapper = await mountApp()
     expect(wrapper.text()).toContain('シナリオエディタ')
     expect(wrapper.find('.outline').exists()).toBe(true)
     wrapper.unmount()
   })
 
   it('見出しが無ければ左ペインは空表示', async () => {
-    const wrapper = await 起動()
+    const wrapper = await mountApp()
     expect(wrapper.findComponent({ name: 'OutlinePane' }).text()).toContain(
       '見出しはまだありません',
     )
@@ -67,27 +67,27 @@ describe('App', () => {
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'ほぞんした見出し' }],
+          content: [{ type: 'text', text: headingMark(1) + 'ほぞんした見出し' }],
         },
         { type: 'paragraph', content: [{ type: 'text', text: 'ほぞんした本文' }] },
       ],
     })
-    const wrapper = await 起動()
-    expect(本体(wrapper).state.doc.textContent).toContain('ほぞんした本文')
+    const wrapper = await mountApp()
+    expect(editorOf(wrapper).state.doc.textContent).toContain('ほぞんした本文')
     expect(wrapper.findComponent({ name: 'OutlinePane' }).text()).toContain('ほぞんした見出し')
     wrapper.unmount()
   })
 
   it('⭐ 本文を編集すると左ペインが追従する（アプリ側の配線ごと）', async () => {
-    const wrapper = await 起動()
-    const editor = 本体(wrapper)
+    const wrapper = await mountApp()
+    const editor = editorOf(wrapper)
     editor.commands.setContent({
       type: 'doc',
       content: [
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'あとから足した章' }],
+          content: [{ type: 'text', text: headingMark(1) + 'あとから足した章' }],
         },
       ],
     })
@@ -101,20 +101,20 @@ describe('App', () => {
     // ⚠ 判別テスト: setContent は選択も動かすので onSelectionUpdate 側でも追従してしまい、
     //   onUpdate の配線が死んでいても緑になる（陽性対照で実測）。
     //   カーソルから離れた位置への挿入なら選択は動かないので、onUpdate だけが発火する。
-    const wrapper = await 起動()
-    const editor = 本体(wrapper)
-    const 選択前 = editor.state.selection.from
+    const wrapper = await mountApp()
+    const editor = editorOf(wrapper)
+    const selectionBefore = editor.state.selection.from
 
-    const 見出し = editor.state.schema.node(
+    const heading = editor.state.schema.node(
       'heading',
       { level: 1 },
-      editor.state.schema.text(見出し記号(1) + 'カーソルから離れた所に足した章'),
+      editor.state.schema.text(headingMark(1) + 'カーソルから離れた所に足した章'),
     )
-    editor.view.dispatch(editor.state.tr.insert(editor.state.doc.content.size, 見出し))
+    editor.view.dispatch(editor.state.tr.insert(editor.state.doc.content.size, heading))
     await nextTick()
 
     // 選択は動いていない＝onSelectionUpdate は発火していない
-    expect(editor.state.selection.from).toBe(選択前)
+    expect(editor.state.selection.from).toBe(selectionBefore)
     expect(wrapper.findComponent({ name: 'OutlinePane' }).text()).toContain(
       'カーソルから離れた所に足した章',
     )
@@ -122,8 +122,8 @@ describe('App', () => {
   })
 
   it('⭐ 画面を閉じるとき、保留中の変更が捨てられずに保存される', async () => {
-    const wrapper = await 起動()
-    本体(wrapper).commands.setContent({
+    const wrapper = await mountApp()
+    editorOf(wrapper).commands.setContent({
       type: 'doc',
       content: [{ type: 'paragraph', content: [{ type: 'text', text: 'とじるまえに書いた行' }] }],
     })
@@ -133,8 +133,8 @@ describe('App', () => {
     for (let i = 0; i < 50; i += 1) {
       await flushPromises()
       await new Promise((resolve) => setTimeout(resolve, 0))
-      const 保存 = await loadDocument()
-      if (JSON.stringify(保存?.doc ?? '').includes('とじるまえに書いた行')) return
+      const stored = await loadDocument()
+      if (JSON.stringify(stored?.doc ?? '').includes('とじるまえに書いた行')) return
     }
     throw new Error('閉じる前の変更が保存されていません')
   })
@@ -146,38 +146,38 @@ describe('App', () => {
  *   document 層 → 本文が変わる、までを 1 本で通す。
  */
 describe('左ペインの操作が本文に届く（配線ごと）', () => {
-  async function 二章立てで起動() {
+  async function mountTwoSections() {
     await saveDocument({
       type: 'doc',
       content: [
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'あかしょう' }],
+          content: [{ type: 'text', text: headingMark(1) + 'あかしょう' }],
         },
         { type: 'paragraph', content: [{ type: 'text', text: 'あかの本文' }] },
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'あおしょう' }],
+          content: [{ type: 'text', text: headingMark(1) + 'あおしょう' }],
         },
         { type: 'paragraph', content: [{ type: 'text', text: 'あおの本文' }] },
       ],
     })
-    return 起動()
+    return mountApp()
   }
 
-  function 章の並び(wrapper: Awaited<ReturnType<typeof 起動>>): string[] {
+  function sectionTitles(wrapper: Awaited<ReturnType<typeof mountApp>>): string[] {
     const out: string[] = []
-    本体(wrapper).state.doc.forEach((node) => {
-      if (node.type.name === 'heading') out.push(見出しの題名(node.textContent))
+    editorOf(wrapper).state.doc.forEach((node) => {
+      if (node.type.name === 'heading') out.push(headingTitle(node.textContent))
     })
     return out
   }
 
   it('⭐ すぐ下の項目へドラッグすると「1 つ下へ」動く（最も自然なジェスチャ）', async () => {
-    const wrapper = await 二章立てで起動()
-    expect(章の並び(wrapper)).toEqual(['あかしょう', 'あおしょう'])
+    const wrapper = await mountTwoSections()
+    expect(sectionTitles(wrapper)).toEqual(['あかしょう', 'あおしょう'])
 
     const items = wrapper.findAll('.outline__item')
     expect(items).toHaveLength(2)
@@ -185,30 +185,30 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
     await items[1]!.trigger('drop')
     await nextTick()
 
-    expect(章の並び(wrapper)).toEqual(['あおしょう', 'あかしょう'])
+    expect(sectionTitles(wrapper)).toEqual(['あおしょう', 'あかしょう'])
     // ⚠ 「そこへは移せません」が出ていないこと（欠陥のときはこれが出ていた）
     expect(wrapper.text()).not.toContain('そこへは移せません')
     wrapper.unmount()
   })
 
   it('すぐ上の項目へドラッグすると「1 つ上へ」動く', async () => {
-    const wrapper = await 二章立てで起動()
+    const wrapper = await mountTwoSections()
     const items = wrapper.findAll('.outline__item')
     await items[1]!.trigger('dragstart')
     await items[0]!.trigger('drop')
     await nextTick()
 
-    expect(章の並び(wrapper)).toEqual(['あおしょう', 'あかしょう'])
+    expect(sectionTitles(wrapper)).toEqual(['あおしょう', 'あかしょう'])
     wrapper.unmount()
   })
 
   it('階層ボタンで見出しのレベルが変わり、ツリーの親子関係も変わる', async () => {
-    const wrapper = await 二章立てで起動()
-    const 下げる = wrapper.findAll('.outline__item')[1]!.findAll('button')[1]!
-    await 下げる.trigger('click')
+    const wrapper = await mountTwoSections()
+    const demoteButton = wrapper.findAll('.outline__item')[1]!.findAll('button')[1]!
+    await demoteButton.trigger('click')
     await nextTick()
 
-    const doc = 本体(wrapper).state.doc
+    const doc = editorOf(wrapper).state.doc
     const levels: number[] = []
     doc.forEach((node) => {
       if (node.type.name === 'heading') levels.push(Number(node.attrs.level))
@@ -227,23 +227,23 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'おやしょう' }],
+          content: [{ type: 'text', text: headingMark(1) + 'おやしょう' }],
         },
         {
           type: 'heading',
           attrs: { level: 2 },
-          content: [{ type: 'text', text: 見出し記号(2) + 'このせつ' }],
+          content: [{ type: 'text', text: headingMark(2) + 'このせつ' }],
         },
       ],
     })
-    const wrapper = await 起動()
+    const wrapper = await mountApp()
     const items = wrapper.findAll('.outline__item')
     await items[0]!.trigger('dragstart')
     await items[1]!.trigger('drop')
     await nextTick()
 
     expect(wrapper.text()).toContain('そこへは移せません')
-    expect(章の並び(wrapper)).toEqual(['おやしょう', 'このせつ'])
+    expect(sectionTitles(wrapper)).toEqual(['おやしょう', 'このせつ'])
     wrapper.unmount()
   })
 })
@@ -253,92 +253,92 @@ describe('左ペインの操作が本文に届く（配線ごと）', () => {
  */
 describe('要望1: フォーカスの所在をブロック単位で示す', () => {
   it('⭐ ブラウザ既定の枠に頼らず、カーソルの居るブロックに印が付く', async () => {
-    const wrapper = await 起動()
-    const editor = 本体(wrapper)
+    const wrapper = await mountApp()
+    const editor = editorOf(wrapper)
     // ⚠ jsdom は contenteditable にフォーカスを当てられないので、
     //   ブラウザと同じ DOM イベントを直接起こす（ProseMirror が受ける経路は同じ）。
     editor.view.dom.dispatchEvent(new FocusEvent('focus'))
     await nextTick()
 
     // 印はブロック単位（ProseMirror の直下の要素）に付く
-    expect(wrapper.findAll('.現在のブロック').length).toBe(1)
+    expect(wrapper.findAll('.current-block').length).toBe(1)
     wrapper.unmount()
   })
 
   it('⭐ フォーカスが無いときは印を出さない（＝これがフォーカスの所在を示している）', async () => {
-    const wrapper = await 起動()
-    const editor = 本体(wrapper)
+    const wrapper = await mountApp()
+    const editor = editorOf(wrapper)
     editor.view.dom.dispatchEvent(new FocusEvent('focus'))
     await nextTick()
-    expect(wrapper.findAll('.現在のブロック').length).toBe(1)
+    expect(wrapper.findAll('.current-block').length).toBe(1)
 
     editor.view.dom.dispatchEvent(new FocusEvent('blur'))
     await nextTick()
-    expect(wrapper.findAll('.現在のブロック').length).toBe(0)
+    expect(wrapper.findAll('.current-block').length).toBe(0)
     wrapper.unmount()
   })
 })
 
 describe('要望3: ドラッグ中に挿入位置のガイドが出る', () => {
-  async function 三章立てで起動() {
+  async function mountThreeSections() {
     await saveDocument({
       type: 'doc',
       content: [
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'いち' }],
+          content: [{ type: 'text', text: headingMark(1) + 'いち' }],
         },
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'に' }],
+          content: [{ type: 'text', text: headingMark(1) + 'に' }],
         },
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 見出し記号(1) + 'さん' }],
+          content: [{ type: 'text', text: headingMark(1) + 'さん' }],
         },
       ],
     })
-    return 起動()
+    return mountApp()
   }
 
   it('⭐ ガイドは dropTargetPos と同じ場所を指す（下へ運ぶと、相手の次の項目の手前）', async () => {
-    const wrapper = await 三章立てで起動()
+    const wrapper = await mountThreeSections()
     const items = wrapper.findAll('.outline__item')
     await items[0]!.trigger('dragstart')
     await items[1]!.trigger('dragover')
     await nextTick()
 
     // 「いち」を「に」の場所へ→「に」のうしろ＝「さん」の手前に線が出る
-    const 線のある項目 = wrapper.findAll('.outline__item--guide')
-    expect(線のある項目).toHaveLength(1)
-    expect(線のある項目[0]!.text()).toContain('さん')
+    const guidedItems = wrapper.findAll('.outline__item--guide')
+    expect(guidedItems).toHaveLength(1)
+    expect(guidedItems[0]!.text()).toContain('さん')
     wrapper.unmount()
   })
 
   it('上へ運ぶときは相手の手前に出る', async () => {
-    const wrapper = await 三章立てで起動()
+    const wrapper = await mountThreeSections()
     const items = wrapper.findAll('.outline__item')
     await items[2]!.trigger('dragstart')
     await items[0]!.trigger('dragover')
     await nextTick()
 
-    const 線のある項目 = wrapper.findAll('.outline__item--guide')
-    expect(線のある項目).toHaveLength(1)
-    expect(線のある項目[0]!.text()).toContain('いち')
+    const guidedItems = wrapper.findAll('.outline__item--guide')
+    expect(guidedItems).toHaveLength(1)
+    expect(guidedItems[0]!.text()).toContain('いち')
     wrapper.unmount()
   })
 
   it('⭐ ガイドが指した場所に、実際に落ちる（見えている線と着地が一致する）', async () => {
-    const wrapper = await 三章立てで起動()
+    const wrapper = await mountThreeSections()
     const items = wrapper.findAll('.outline__item')
     await items[0]!.trigger('dragstart')
     await items[1]!.trigger('dragover')
     await nextTick()
-    const 予告 = wrapper.findAll('.outline__item--guide')[0]!.text()
-    expect(予告).toContain('さん')
+    const guideText = wrapper.findAll('.outline__item--guide')[0]!.text()
+    expect(guideText).toContain('さん')
 
     await items[1]!.trigger('drop')
     await nextTick()
@@ -350,7 +350,7 @@ describe('要望3: ドラッグ中に挿入位置のガイドが出る', () => {
   })
 
   it('落としたらガイドは消える', async () => {
-    const wrapper = await 三章立てで起動()
+    const wrapper = await mountThreeSections()
     const items = wrapper.findAll('.outline__item')
     await items[0]!.trigger('dragstart')
     await items[1]!.trigger('dragover')
@@ -365,20 +365,20 @@ describe('要望3: ドラッグ中に挿入位置のガイドが出る', () => {
 })
 
 describe('要望4: 「これ以上は変えられません」が出るタイミング', () => {
-  async function 起動して(content: unknown) {
+  async function mountWith(content: unknown) {
     await saveDocument(content)
-    return 起動()
+    return mountApp()
   }
-  function 見出し(level: number, text: string) {
+  function heading(level: number, text: string) {
     return {
       type: 'heading',
       attrs: { level },
-      content: [{ type: 'text', text: 見出し記号(level) + text }],
+      content: [{ type: 'text', text: headingMark(level) + text }],
     }
   }
 
   it('⭐ 陰性: 上限に「達しただけ」では何も出ない（ボタンが押せないことで示す）', async () => {
-    const wrapper = await 起動して({ type: 'doc', content: [見出し(6, 'げんかい')] })
+    const wrapper = await mountWith({ type: 'doc', content: [heading(6, 'げんかい')] })
     const btns = wrapper.findAll('.outline__item')[0]!.findAll('button')
     // → は押せない＝「達している」ことが見た目で分かる
     expect(btns[1]!.attributes('disabled')).toBeDefined()
@@ -390,7 +390,7 @@ describe('要望4: 「これ以上は変えられません」が出るタイミ�
   })
 
   it('⭐ 陰性: 下限でも同じ（← が押せず、知らせも出ない）', async () => {
-    const wrapper = await 起動して({ type: 'doc', content: [見出し(1, 'いちばんうえ')] })
+    const wrapper = await mountWith({ type: 'doc', content: [heading(1, 'いちばんうえ')] })
     const btns = wrapper.findAll('.outline__item')[0]!.findAll('button')
     expect(btns[0]!.attributes('disabled')).toBeDefined()
     await btns[0]!.trigger('click')
@@ -401,9 +401,9 @@ describe('要望4: 「これ以上は変えられません」が出るタイミ�
 
   it('⭐ 陽性: 見えない理由で断られたときだけ知らせが出る（配下が押し出される）', async () => {
     // 親 5・子 6。親を下げると子が 7 になってしまう＝左ペインからは分からない理由
-    const wrapper = await 起動して({
+    const wrapper = await mountWith({
       type: 'doc',
-      content: [見出し(5, 'おや'), 見出し(6, 'こ')],
+      content: [heading(5, 'おや'), heading(6, 'こ')],
     })
     const btns = wrapper.findAll('.outline__item')[0]!.findAll('button')
     expect(btns[1]!.attributes('disabled')).toBeUndefined() // 親自身は下げられる見た目
@@ -415,15 +415,15 @@ describe('要望4: 「これ以上は変えられません」が出るタイミ�
   })
 
   it('⭐ そのとき本文は変わっていない（黙って潰さない）', async () => {
-    const wrapper = await 起動して({
+    const wrapper = await mountWith({
       type: 'doc',
-      content: [見出し(5, 'おや'), 見出し(6, 'こ')],
+      content: [heading(5, 'おや'), heading(6, 'こ')],
     })
     await wrapper.findAll('.outline__item')[0]!.findAll('button')[1]!.trigger('click')
     await nextTick()
 
     const levels: number[] = []
-    本体(wrapper).state.doc.forEach((n) => {
+    editorOf(wrapper).state.doc.forEach((n) => {
       if (n.type.name === 'heading') levels.push(Number(n.attrs.level))
     })
     // 以前はここが [6, 6] になって、親子が同じ深さに潰れていた
@@ -432,11 +432,11 @@ describe('要望4: 「これ以上は変えられません」が出るタイミ�
   })
 
   it('普通に変えられるときは知らせを出さない', async () => {
-    const wrapper = await 起動して({ type: 'doc', content: [見出し(2, 'ふつう')] })
+    const wrapper = await mountWith({ type: 'doc', content: [heading(2, 'ふつう')] })
     await wrapper.findAll('.outline__item')[0]!.findAll('button')[1]!.trigger('click')
     await nextTick()
     expect(wrapper.text()).not.toContain('ずらせない')
-    expect(本体(wrapper).state.doc.child(0).textContent).toBe('### ふつう')
+    expect(editorOf(wrapper).state.doc.child(0).textContent).toBe('### ふつう')
     wrapper.unmount()
   })
 })
@@ -448,7 +448,7 @@ describe('要望4: 「これ以上は変えられません」が出るタイミ�
  */
 describe('旧版形式の doc を開いても、見出しが失われない', () => {
   /** 記号が本文に無く、レベルが attrs にしかない＝旧版が保存していた形。 */
-  const 旧版の内容 = {
+  const legacyContent = {
     type: 'doc',
     content: [
       { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'まえがき' }] },
@@ -458,8 +458,8 @@ describe('旧版形式の doc を開いても、見出しが失われない', ()
   }
 
   it('⭐ 左ペインに見出しが出る（以前は「見出しはまだありません」だった）', async () => {
-    await saveDocument(旧版の内容)
-    const wrapper = await 起動()
+    await saveDocument(legacyContent)
+    const wrapper = await mountApp()
     const pane = wrapper.findComponent({ name: 'OutlinePane' })
     expect(pane.text()).toContain('まえがき')
     expect(pane.text()).toContain('そのいち')
@@ -467,39 +467,39 @@ describe('旧版形式の doc を開いても、見出しが失われない', ()
   })
 
   it('⭐ 記号が本文に補われている（編集できる形で見えている）', async () => {
-    await saveDocument(旧版の内容)
-    const wrapper = await 起動()
-    expect(本体(wrapper).state.doc.child(0).textContent).toBe('# まえがき')
-    expect(本体(wrapper).state.doc.child(2).textContent).toBe('## そのいち')
+    await saveDocument(legacyContent)
+    const wrapper = await mountApp()
+    expect(editorOf(wrapper).state.doc.child(0).textContent).toBe('# まえがき')
+    expect(editorOf(wrapper).state.doc.child(2).textContent).toBe('## そのいち')
     wrapper.unmount()
   })
 
   it('⭐⭐ 1 文字打っても見出しのまま（以前はここで全ブロックが段落へ降格した）', async () => {
-    await saveDocument(旧版の内容)
-    const wrapper = await 起動()
-    const editor = 本体(wrapper)
+    await saveDocument(legacyContent)
+    const wrapper = await mountApp()
+    const editor = editorOf(wrapper)
     editor.view.dispatch(editor.state.tr.insertText('。', editor.state.doc.content.size - 1))
     await nextTick()
 
-    const 種類: string[] = []
-    editor.state.doc.forEach((n) => 種類.push(n.type.name))
-    expect(種類.slice(0, 3)).toEqual(['heading', 'paragraph', 'heading'])
+    const nodeNames: string[] = []
+    editor.state.doc.forEach((n) => nodeNames.push(n.type.name))
+    expect(nodeNames.slice(0, 3)).toEqual(['heading', 'paragraph', 'heading'])
     expect(wrapper.findComponent({ name: 'OutlinePane' }).text()).toContain('まえがき')
     wrapper.unmount()
   })
 
   it('⭐ 打った後に自動保存されても、見出しが残ったまま確定する', async () => {
-    await saveDocument(旧版の内容)
-    const wrapper = await 起動()
-    const editor = 本体(wrapper)
+    await saveDocument(legacyContent)
+    const wrapper = await mountApp()
+    const editor = editorOf(wrapper)
     editor.view.dispatch(editor.state.tr.insertText('。', editor.state.doc.content.size - 1))
     wrapper.unmount() // 閉じるときに flush される
 
     for (let i = 0; i < 50; i += 1) {
       await flushPromises()
       await new Promise((resolve) => setTimeout(resolve, 0))
-      const 保存 = await loadDocument()
-      if (JSON.stringify(保存?.doc ?? '').includes('# まえがき')) return
+      const stored = await loadDocument()
+      if (JSON.stringify(stored?.doc ?? '').includes('# まえがき')) return
     }
     throw new Error('保存された内容から見出しが失われています')
   })

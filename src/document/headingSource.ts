@@ -2,7 +2,7 @@ import { Extension } from '@tiptap/core'
 import Heading from '@tiptap/extension-heading'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { 見出しレベル, 記号の長さ } from './heading'
+import { headingLevel, markLength } from './heading'
 
 /**
  * ソース方式の見出し（CONCEPT Q2 改訂・2026-08-23）。
@@ -21,7 +21,7 @@ export const SourceHeading = Heading.extend({
   },
 })
 
-export const 見出し同期キー = new PluginKey('見出し同期')
+export const headingSyncKey = new PluginKey('headingSync')
 
 /**
  * **本文のテキストを唯一の真実として、段落 ⇄ 見出しを合わせ続ける。**
@@ -39,43 +39,43 @@ export const 見出し同期キー = new PluginKey('見出し同期')
  * ⚠ `setNodeMarkup` はノードの大きさを変えないので、**カーソル位置は動かない**。
  */
 export const HeadingSync = Extension.create({
-  name: '見出し同期',
+  name: 'headingSync',
 
   addProseMirrorPlugins() {
     return [
       new Plugin({
-        key: 見出し同期キー,
+        key: headingSyncKey,
 
         appendTransaction(transactions, _oldState, newState) {
           if (!transactions.some((tr) => tr.docChanged)) return null
 
-          const 段落 = newState.schema.nodes.paragraph
-          const 見出し = newState.schema.nodes.heading
-          if (!段落 || !見出し) return null
+          const paragraph = newState.schema.nodes.paragraph
+          const heading = newState.schema.nodes.heading
+          if (!paragraph || !heading) return null
 
           const tr = newState.tr
-          let 直した = false
+          let changed = false
 
           newState.doc.forEach((node, pos) => {
-            const 段落か見出し = node.type === 段落 || node.type === 見出し
-            if (!段落か見出し) return
+            const isBlockText = node.type === paragraph || node.type === heading
+            if (!isBlockText) return
 
-            const level = 見出しレベル(node.textContent)
+            const level = headingLevel(node.textContent)
 
             if (level === null) {
-              if (node.type === 見出し) {
-                tr.setNodeMarkup(pos, 段落, {}, node.marks)
-                直した = true
+              if (node.type === heading) {
+                tr.setNodeMarkup(pos, paragraph, {}, node.marks)
+                changed = true
               }
               return
             }
-            if (node.type !== 見出し || Number(node.attrs.level) !== level) {
-              tr.setNodeMarkup(pos, 見出し, { ...node.attrs, level }, node.marks)
-              直した = true
+            if (node.type !== heading || Number(node.attrs.level) !== level) {
+              tr.setNodeMarkup(pos, heading, { ...node.attrs, level }, node.marks)
+              changed = true
             }
           })
 
-          return 直した ? tr : null
+          return changed ? tr : null
         },
 
         props: {
@@ -87,9 +87,11 @@ export const HeadingSync = Extension.create({
             const decorations: Decoration[] = []
             state.doc.forEach((node, pos) => {
               if (node.type.name !== 'heading') return
-              const 長さ = 記号の長さ(node.textContent)
-              if (長さ === 0) return
-              decorations.push(Decoration.inline(pos + 1, pos + 1 + 長さ, { class: '見出し記号' }))
+              const length = markLength(node.textContent)
+              if (length === 0) return
+              decorations.push(
+                Decoration.inline(pos + 1, pos + 1 + length, { class: 'heading-mark' }),
+              )
             })
             return DecorationSet.create(state.doc, decorations)
           },

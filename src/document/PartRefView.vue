@@ -17,9 +17,7 @@ const body = computed<Inline[]>(() => part.value?.body ?? [])
  * ⚠ inline 版のときは **span** で包む。`<p>` の中に `<div>` を入れると HTML として不正で、
  *   ブラウザの正規化が段落を割りうる（＝置いた位置が黙って変わる）。
  */
-const ラッパのタグ = computed(() =>
-  props.node.type.name === PART_REF_INLINE_NODE ? 'span' : 'div',
-)
+const wrapperTag = computed(() => (props.node.type.name === PART_REF_INLINE_NODE ? 'span' : 'div'))
 
 /**
  * 画像の実体（Blob）を表示するための一時 URL。
@@ -27,37 +25,37 @@ const ラッパのタグ = computed(() =>
  * ⚠ **必ず解放する。** 解放しないと、画像を差し替えるたびに古い Blob がページの寿命まで残る
  *   （リロードするまで解放されない種類の漏れで、動作では気づけない）。
  */
-const 画像URL = ref<string[]>([])
-let 発行済み: string[] = []
+const imageUrls = ref<string[]>([])
+let issuedUrls: string[] = []
 
-function 解放する() {
-  for (const url of 発行済み) URL.revokeObjectURL(url)
-  発行済み = []
+function revokeAll() {
+  for (const url of issuedUrls) URL.revokeObjectURL(url)
+  issuedUrls = []
 }
 
 watch(
   body,
   (list) => {
-    解放する()
-    画像URL.value = list.map((item) => {
-      if (item.種別 !== '画像') return ''
-      const url = URL.createObjectURL(item.画像)
-      発行済み.push(url)
+    revokeAll()
+    imageUrls.value = list.map((item) => {
+      if (item.kind !== 'image') return ''
+      const url = URL.createObjectURL(item.image)
+      issuedUrls.push(url)
       return url
     })
   },
   { immediate: true },
 )
 
-onBeforeUnmount(解放する)
+onBeforeUnmount(revokeAll)
 </script>
 
 <template>
   <!-- 本文の流れの中で「異物」として見える（CONCEPT Q5）。 -->
   <NodeViewWrapper
-    :as="ラッパのタグ"
+    :as="wrapperTag"
     class="part-ref"
-    :class="{ 'part-ref--inline': ラッパのタグ === 'span' }"
+    :class="{ 'part-ref--inline': wrapperTag === 'span' }"
     :data-instance-id="instanceId"
     :data-part-id="partId"
   >
@@ -66,12 +64,12 @@ onBeforeUnmount(解放する)
       <span class="part-ref__body">
         <template v-for="(item, i) in body" :key="i">
           <img
-            v-if="item.種別 === '画像'"
+            v-if="item.kind === 'image'"
             class="part-ref__image"
-            :src="画像URL[i]"
-            :alt="item.代替文"
+            :src="imageUrls[i]"
+            :alt="item.alt"
           />
-          <span v-else class="part-ref__text">{{ item.文 }}</span>
+          <span v-else class="part-ref__text">{{ item.text }}</span>
         </template>
       </span>
     </template>

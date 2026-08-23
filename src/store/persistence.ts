@@ -10,6 +10,7 @@
 
 import { toRaw } from 'vue'
 import type { TemplateInstance } from '../template/model'
+import { migrateLegacyImageKeys } from '../template/render/image'
 
 const DB_NAME = 'trpg-scenario-editor'
 /**
@@ -129,15 +130,15 @@ export async function saveInstance(instance: TemplateInstance): Promise<void> {
   //   （構造化複製は Proxy を知らない）。⚠ 落ち方が意地悪で、**追加の経路は素のオブジェクトを
   //   返すので通り、差し替えの経路だけが落ちる**——どちらも同じ関数を呼んでいるのに。
   //   → 呼び手に「生で渡してください」と要求せず、**受け側で 1 回戻す**。
-  const 生 = toRaw(instance)
+  const raw = toRaw(instance)
   const images: StoredInstance['images'] = {}
-  for (const [key, blob] of Object.entries(toRaw(生.images))) {
+  for (const [key, blob] of Object.entries(toRaw(raw.images))) {
     images[key] = { bytes: await blob.arrayBuffer(), type: blob.type }
   }
   const record: StoredInstance = {
-    id: 生.id,
-    templateId: 生.templateId,
-    data: toRaw(生.data),
+    id: raw.id,
+    templateId: raw.templateId,
+    data: toRaw(raw.data),
     images,
   }
   await withStore(
@@ -167,10 +168,17 @@ export async function loadInstances(): Promise<TemplateInstance[]> {
   )
   return records.map((record) => {
     const images: Record<string, Blob> = {}
-    for (const [key, 画像] of Object.entries(record.images ?? {})) {
-      images[key] = new Blob([画像.bytes], { type: 画像.type })
+    for (const [key, stored] of Object.entries(record.images ?? {})) {
+      images[key] = new Blob([stored.bytes], { type: stored.type })
     }
-    return { id: record.id, templateId: record.templateId, data: record.data, images }
+    // ⚠ 旧キーの読み替えは**読み込みの境界で 1 回だけ**行う（§1-8 の英語化の前に保存された分）。
+    //   ここを通した後は、上の層に旧キーは 1 つも流れない。
+    return migrateLegacyImageKeys({
+      id: record.id,
+      templateId: record.templateId,
+      data: record.data,
+      images,
+    })
   })
 }
 

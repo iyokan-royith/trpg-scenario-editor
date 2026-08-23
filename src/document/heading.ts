@@ -14,32 +14,32 @@
 import { Fragment, Node as PMNode, type Schema } from '@tiptap/pm/model'
 
 /** `#` 1〜6 個＋半角スペース。⚠ スペースまでを記号とみなす（`#hashtag` は見出しではない）。 */
-const 記号の形 = /^(#{1,6}) /
+const MARK_PATTERN = /^(#{1,6}) /
 
-export const 最小レベル = 1
-export const 最大レベル = 6
+export const MIN_LEVEL = 1
+export const MAX_LEVEL = 6
 
 /** 本文テキストから見出しレベルを読む。見出しでなければ null。 */
-export function 見出しレベル(text: string): number | null {
-  const m = 記号の形.exec(text)
+export function headingLevel(text: string): number | null {
+  const m = MARK_PATTERN.exec(text)
   return m ? m[1]!.length : null
 }
 
 /** レベルに対応する記号（末尾のスペースを含む）。 */
-export function 見出し記号(level: number): string {
-  const n = Math.min(最大レベル, Math.max(最小レベル, Math.trunc(level)))
+export function headingMark(level: number): string {
+  const n = Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, Math.trunc(level)))
   return '#'.repeat(n) + ' '
 }
 
 /** 本文テキストから記号を剥がした「題名」。見出しでなければそのまま返す。 */
-export function 見出しの題名(text: string): string {
-  const level = 見出しレベル(text)
+export function headingTitle(text: string): string {
+  const level = headingLevel(text)
   return level === null ? text : text.slice(level + 1)
 }
 
 /** 本文テキストの先頭にある記号の文字数（見出しでなければ 0）。 */
-export function 記号の長さ(text: string): number {
-  const level = 見出しレベル(text)
+export function markLength(text: string): number {
+  const level = headingLevel(text)
   return level === null ? 0 : level + 1
 }
 
@@ -68,24 +68,24 @@ export function 記号の長さ(text: string): number {
  * ⚠ 呼ぶ場所は **doc が外から入ってくる所すべて**（現在 3 つ）:
  *   ①保存された内容の読み込み ②md の解釈 ③md への書き出しの入力。
  */
-export function 記号を補う(doc: PMNode): PMNode {
-  const 見出し = doc.type.schema.nodes.heading
-  if (!見出し) return doc
+export function restoreHeadingMarks(doc: PMNode): PMNode {
+  const heading = doc.type.schema.nodes.heading
+  if (!heading) return doc
 
   const blocks: PMNode[] = []
-  let 変えた = false
+  let changed = false
   doc.forEach((node) => {
-    if (node.type !== 見出し || 見出しレベル(node.textContent) !== null) {
+    if (node.type !== heading || headingLevel(node.textContent) !== null) {
       blocks.push(node)
       return
     }
     // 記号が無い＝外から来た見出し。attrs.level を「元の書き手の意図」として読み、記号に起こす。
     // ⚠ attrs.level をふるまいに使うのは **ここだけ**。ここを通った後は誰も読まない。
-    const 記号 = doc.type.schema.text(見出し記号(Number(node.attrs.level) || 1))
-    blocks.push(node.copy(Fragment.from(記号).append(node.content)))
-    変えた = true
+    const mark = doc.type.schema.text(headingMark(Number(node.attrs.level) || 1))
+    blocks.push(node.copy(Fragment.from(mark).append(node.content)))
+    changed = true
   })
-  return 変えた ? doc.copy(Fragment.fromArray(blocks)) : doc
+  return changed ? doc.copy(Fragment.fromArray(blocks)) : doc
 }
 
 /**
@@ -97,9 +97,9 @@ export function 記号を補う(doc: PMNode): PMNode {
  *
  * ⚠ 読めない JSON はそのまま返す（fail-open）。ここで投げると**開けなくなる**方が損。
  */
-export function 保存内容の記号を補う(json: unknown, schema: Schema): unknown {
+export function restoreHeadingMarksInJson(json: unknown, schema: Schema): unknown {
   try {
-    return 記号を補う(PMNode.fromJSON(schema, json as never)).toJSON()
+    return restoreHeadingMarks(PMNode.fromJSON(schema, json as never)).toJSON()
   } catch {
     return json
   }

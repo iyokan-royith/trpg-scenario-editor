@@ -1,7 +1,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import { PART_REF_NODE } from './partRefExtension'
-import { 最大レベル, 最小レベル, 見出し記号, 見出しレベル, 記号の長さ } from './heading'
+import { MAX_LEVEL, MIN_LEVEL, headingMark, headingLevel, markLength } from './heading'
 
 /**
  * 左ペインからの並べ替え・階層変更。
@@ -26,8 +26,8 @@ export interface SectionRange {
  * CONCEPT Q2 改訂（2026-08-23）で記号が本文に残るようになり、真実がテキスト側へ移った。
  * ⚠ こうしておくと、テストが素で組んだ doc（同期プラグインを通っていない）でも正しく動く。
  */
-function headingLevel(node: PMNode): number | null {
-  return 見出しレベル(node.textContent)
+function levelOf(node: PMNode): number | null {
+  return headingLevel(node.textContent)
 }
 
 /** doc の直下のブロック境界（＝挿入して良い位置）を全部返す。先頭 0 と末尾を含む。 */
@@ -49,7 +49,7 @@ export function sectionRangeAt(doc: PMNode, pos: number): SectionRange | null {
   const node = doc.nodeAt(pos)
   if (!node) return null
 
-  const level = headingLevel(node)
+  const level = levelOf(node)
   if (level === null) {
     // 見出しでないブロック（段落・パート参照など）は、そのブロック 1 個だけが範囲。
     return { from: pos, to: pos + node.nodeSize, level: null }
@@ -63,7 +63,7 @@ export function sectionRangeAt(doc: PMNode, pos: number): SectionRange | null {
       return
     }
     if (!scanning) return
-    const childLevel = headingLevel(child)
+    const childLevel = levelOf(child)
     if (childLevel !== null && childLevel <= level) {
       scanning = false
       return
@@ -128,35 +128,34 @@ export function moveSection(
  * ⭐ 「できるか」と「やる」を分けてあるのは、**ボタンの見た目と実行が同じ規則から出る**ため。
  *   別々に判定すると「押せるのに押すと断られる」が生まれる。
  */
-export type 階層変更の可否 =
-  | { 可: true }
-  | { 可: false; 理由: 'レベルの範囲外' | '配下が範囲外へ押し出される' | '見出しではない' }
+export type LevelChangeResult =
+  { ok: true } | { ok: false; reason: 'outOfRange' | 'descendantsOutOfRange' | 'notHeading' }
 
-export function 階層を変えられるか(
+export function canChangeLevel(
   doc: PMNode,
   sourcePos: number,
   newLevel: number,
-): 階層変更の可否 {
+): LevelChangeResult {
   const range = sectionRangeAt(doc, sourcePos)
-  if (!range || range.level === null) return { 可: false, 理由: '見出しではない' }
-  if (newLevel < 最小レベル || newLevel > 最大レベル) {
-    return { 可: false, 理由: 'レベルの範囲外' }
+  if (!range || range.level === null) return { ok: false, reason: 'notHeading' }
+  if (newLevel < MIN_LEVEL || newLevel > MAX_LEVEL) {
+    return { ok: false, reason: 'outOfRange' }
   }
   const delta = newLevel - range.level
-  if (delta === 0) return { 可: false, 理由: 'レベルの範囲外' }
+  if (delta === 0) return { ok: false, reason: 'outOfRange' }
 
   // ⚠ 配下がはみ出す場合は **断る**。以前はここで clamp していて、
   //   「親を 1 つ下げたら、上限に張り付いた子だけ動かず、親子が同じ深さに潰れる」
   //   という **黙ったままの構造破壊**が起きていた（2026-08-23 に実測）。
-  let はみ出す = false
+  let overflows = false
   doc.forEach((node, offset) => {
     if (offset < range.from || offset >= range.to) return
-    const level = headingLevel(node)
+    const level = levelOf(node)
     if (level === null) return
     const next = level + delta
-    if (next < 最小レベル || next > 最大レベル) はみ出す = true
+    if (next < MIN_LEVEL || next > MAX_LEVEL) overflows = true
   })
-  return はみ出す ? { 可: false, 理由: '配下が範囲外へ押し出される' } : { 可: true }
+  return overflows ? { ok: false, reason: 'descendantsOutOfRange' } : { ok: true }
 }
 
 /**
@@ -176,34 +175,34 @@ export function setSectionLevel(
   newLevel: number,
 ): Transaction | null {
   const doc = state.doc
-  if (!階層を変えられるか(doc, sourcePos, newLevel).可) return null
+  if (!canChangeLevel(doc, sourcePos, newLevel).ok) return null
 
   const range = sectionRangeAt(doc, sourcePos)!
   const delta = newLevel - range.level!
 
-  const 書き換え: Array<{ from: number; to: number; 記号: string }> = []
+  const rewrites: Array<{ from: number; to: number; mark: string }> = []
   doc.forEach((node, offset) => {
     if (offset < range.from || offset >= range.to) return
-    const level = headingLevel(node)
+    const level = levelOf(node)
     if (level === null) return
     // ノードの中身は offset+1 から始まる。記号はその先頭にある。
-    書き換え.push({
+    rewrites.push({
       from: offset + 1,
-      to: offset + 1 + 記号の長さ(node.textContent),
-      記号: 見出し記号(level + delta),
+      to: offset + 1 + markLength(node.textContent),
+      mark: headingMark(level + delta),
     })
   })
-  if (書き換え.length === 0) return null
+  if (rewrites.length === 0) return null
 
   const tr = state.tr
   // ⚠ 記号の長さが変わると後ろの位置がずれるので、**うしろから**当てる。
-  for (const 一件 of [...書き換え].reverse()) {
-    tr.insertText(一件.記号, 一件.from, 一件.to)
+  for (const item of [...rewrites].reverse()) {
+    tr.insertText(item.mark, item.from, item.to)
   }
   return tr.docChanged ? tr : null
 }
 
-/** 参照ノードかどうか（UI の出し分け用）。 */
+/** isPartRefNodeどうか（UI の出し分け用）。 */
 export function isPartRefAt(doc: PMNode, pos: number): boolean {
   return doc.nodeAt(pos)?.type.name === PART_REF_NODE
 }

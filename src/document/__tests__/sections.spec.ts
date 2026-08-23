@@ -23,31 +23,31 @@ import {
   topLevelBoundaries,
 } from '../sections'
 import { flattenOutline, outline } from '../outline'
-import { 見出しの題名, 見出し記号 } from '../heading'
+import { headingTitle, headingMark } from '../heading'
 
 /** ⚠ 記号は本物のテキスト（CONCEPT Q2 改訂・2026-08-23）。 */
-function 見出し(level: number, text: string) {
+function heading(level: number, text: string) {
   return {
     type: 'heading',
     attrs: { level },
-    content: [{ type: 'text', text: 見出し記号(level) + text }],
+    content: [{ type: 'text', text: headingMark(level) + text }],
   }
 }
-function 段落(text: string) {
+function paragraph(text: string) {
   return { type: 'paragraph', content: [{ type: 'text', text }] }
 }
 
 let editor: Editor
 
 /** doc 直下のブロックの開始位置（並び順） */
-function 境界(): number[] {
+function boundaries(): number[] {
   return topLevelBoundaries(editor.state.doc)
 }
 
 /** ⚠ 見出しには記号が入っているので、並びの照合では剥がす（ツリーと同じ見え方にする）。 */
-function 本文の並び(): string[] {
+function bodyTitles(): string[] {
   const out: string[] = []
-  editor.state.doc.forEach((node) => out.push(見出しの題名(node.textContent)))
+  editor.state.doc.forEach((node) => out.push(headingTitle(node.textContent)))
   return out
 }
 
@@ -57,12 +57,12 @@ beforeEach(() => {
     content: {
       type: 'doc',
       content: [
-        見出し(1, 'あかしょう'),
-        段落('あかの本文'),
-        見出し(2, 'あかのせつ'),
-        段落('あかのせつの本文'),
-        見出し(1, 'あおしょう'),
-        段落('あおの本文'),
+        heading(1, 'あかしょう'),
+        paragraph('あかの本文'),
+        heading(2, 'あかのせつ'),
+        paragraph('あかのせつの本文'),
+        heading(1, 'あおしょう'),
+        paragraph('あおの本文'),
       ],
     },
   })
@@ -73,25 +73,25 @@ describe('節の範囲', () => {
     const range = sectionRangeAt(editor.state.doc, 0)!
     expect(range.level).toBe(1)
     // 「あかしょう」節は 4 ブロック（見出し・本文・小見出し・本文）
-    expect(range.from).toBe(境界()[0])
-    expect(range.to).toBe(境界()[4])
+    expect(range.from).toBe(boundaries()[0])
+    expect(range.to).toBe(boundaries()[4])
   })
 
   it('見出しでないブロックはそのブロック 1 個だけ', () => {
-    const 段落の位置 = 境界()[1]!
-    const range = sectionRangeAt(editor.state.doc, 段落の位置)!
+    const paragraphPos = boundaries()[1]!
+    const range = sectionRangeAt(editor.state.doc, paragraphPos)!
     expect(range.level).toBeNull()
-    expect(range.to).toBe(境界()[2])
+    expect(range.to).toBe(boundaries()[2])
   })
 })
 
 describe('P1-3a: 並べ替え', () => {
   it('あとの節を先頭へ移すと、本文の順序が実際に変わる', () => {
-    const あお = 境界()[4]!
-    const tr = moveSection(editor.state, あお, 0)!
+    const blue = boundaries()[4]!
+    const tr = moveSection(editor.state, blue, 0)!
     editor.view.dispatch(tr)
 
-    expect(本文の並び()).toEqual([
+    expect(bodyTitles()).toEqual([
       'あおしょう',
       'あおの本文',
       'あかしょう',
@@ -102,7 +102,7 @@ describe('P1-3a: 並べ替え', () => {
   })
 
   it('節を動かすとツリーも追従する（ツリーは別データを持たない）', () => {
-    editor.view.dispatch(moveSection(editor.state, 境界()[4]!, 0)!)
+    editor.view.dispatch(moveSection(editor.state, boundaries()[4]!, 0)!)
     expect(outline(editor.state.doc).map((i) => i.title)).toEqual(['あおしょう', 'あかしょう'])
   })
 
@@ -114,8 +114,8 @@ describe('P1-3a: 並べ替え', () => {
   })
 
   it('自分自身の内側へは移せない（移せたら節が消える）', () => {
-    const 自分の中 = 境界()[2]!
-    expect(moveSection(editor.state, 0, 自分の中)).toBeNull()
+    const insidePos = boundaries()[2]!
+    expect(moveSection(editor.state, 0, insidePos)).toBeNull()
   })
 
   it('ブロック境界でない位置は受け付けない', () => {
@@ -127,28 +127,28 @@ describe('P1-3a: 落とした先 → 挿入位置の翻訳（dropTargetPos）', 
   it('⭐ すぐ下の兄弟へ落とすと「1 つ下へ動く」（相手のうしろ）', () => {
     // ⚠ ここが「相手の前に挿す」意味だと、動かない位置を指してしまい
     //   リスト UI でいちばん自然な「1 つ下へ」が死ぬ。
-    const あか = 境界()[0]!
-    const あお = 境界()[4]!
-    const dest = dropTargetPos(editor.state.doc, あか, あお)!
+    const red = boundaries()[0]!
+    const blue = boundaries()[4]!
+    const dest = dropTargetPos(editor.state.doc, red, blue)!
     expect(dest).toBe(editor.state.doc.content.size)
 
-    editor.view.dispatch(moveSection(editor.state, あか, dest)!)
+    editor.view.dispatch(moveSection(editor.state, red, dest)!)
     expect(outline(editor.state.doc).map((i) => i.title)).toEqual(['あおしょう', 'あかしょう'])
   })
 
   it('すぐ上の兄弟へ落とすと「1 つ上へ動く」（相手のまえ）', () => {
-    const あお = 境界()[4]!
-    const あか = 境界()[0]!
-    const dest = dropTargetPos(editor.state.doc, あお, あか)!
+    const blue = boundaries()[4]!
+    const red = boundaries()[0]!
+    const dest = dropTargetPos(editor.state.doc, blue, red)!
     expect(dest).toBe(0)
 
-    editor.view.dispatch(moveSection(editor.state, あお, dest)!)
+    editor.view.dispatch(moveSection(editor.state, blue, dest)!)
     expect(outline(editor.state.doc).map((i) => i.title)).toEqual(['あおしょう', 'あかしょう'])
   })
 
   it('自分自身・自分の配下へは落とせない', () => {
     expect(dropTargetPos(editor.state.doc, 0, 0)).toBeNull()
-    expect(dropTargetPos(editor.state.doc, 0, 境界()[2]!)).toBeNull()
+    expect(dropTargetPos(editor.state.doc, 0, boundaries()[2]!)).toBeNull()
   })
 })
 
@@ -165,7 +165,7 @@ describe('P1-3b: 階層変更', () => {
 
   it('階層を上げると、ツリーの親子関係が変わる', () => {
     // 「あかのせつ」(level 2) を level 1 にすると、あかしょうの子ではなくなる
-    editor.view.dispatch(setSectionLevel(editor.state, 境界()[2]!, 1)!)
+    editor.view.dispatch(setSectionLevel(editor.state, boundaries()[2]!, 1)!)
     expect(outline(editor.state.doc).map((i) => i.title)).toEqual([
       'あかしょう',
       'あかのせつ',
@@ -179,6 +179,6 @@ describe('P1-3b: 階層変更', () => {
   })
 
   it('見出しでないブロックには効かない（深さは位置で決まるので移動で表す）', () => {
-    expect(setSectionLevel(editor.state, 境界()[1]!, 2)).toBeNull()
+    expect(setSectionLevel(editor.state, boundaries()[1]!, 2)).toBeNull()
   })
 })

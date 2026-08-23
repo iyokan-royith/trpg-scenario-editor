@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { partKeyOf, インラインの文, type Part } from '../template/model'
+import { partKeyOf, inlineText, type Part, type PartForm } from '../template/model'
 
 /**
  * 素材一覧（DESIGN-v0.md 1-7-4）。
@@ -16,55 +16,70 @@ import { partKeyOf, インラインの文, type Part } from '../template/model'
 const props = defineProps<{
   parts: Part[]
   /** まだ本文に置かれていないパートのキー（`analyzePlacement().unplaced` 由来） */
-  未配置キー: string[]
+  unplacedKeys: string[]
 }>()
 
 const emit = defineEmits<{
-  (e: '画像を追加'): void
-  (e: '挿入', part: Part): void
-  (e: '差し替え', part: Part): void
-  (e: '削除', part: Part): void
+  (e: 'addImage'): void
+  (e: 'insert', part: Part): void
+  (e: 'replace', part: Part): void
+  (e: 'remove', part: Part): void
 }>()
 
-const 未配置だけ = ref(false)
-
-const 未配置の集合 = computed(() => new Set(props.未配置キー))
-
-function 未配置か(part: Part): boolean {
-  return 未配置の集合.value.has(partKeyOf(part.instanceId, part.partId))
+/**
+ * 形態の**表示名**。
+ *
+ * ⚠⚠ 識別子（`PartForm` の値）は英語だが、**画面に出る文字は日本語のまま**（§1-8-1）。
+ *   この対応表が無いと、値の英語化がそのまま利用者の目に出てしまう。
+ *   置き場が UI 層なのは、表示名は表示する側の持ち物だから（テンプレ層は表示を知らない）。
+ */
+const FORM_LABELS: Record<PartForm, string> = {
+  section: '独立章',
+  inline: '本文中',
+  figure: '図',
 }
 
-const 表示する一覧 = computed(() => (未配置だけ.value ? props.parts.filter(未配置か) : props.parts))
+const onlyUnplaced = ref(false)
+
+const unplacedSet = computed(() => new Set(props.unplacedKeys))
+
+function isUnplaced(part: Part): boolean {
+  return unplacedSet.value.has(partKeyOf(part.instanceId, part.partId))
+}
+
+const visibleParts = computed(() =>
+  onlyUnplaced.value ? props.parts.filter(isUnplaced) : props.parts,
+)
 </script>
 
 <template>
   <aside class="materials" aria-label="素材">
     <div class="materials__head">
       <!-- ⚠ 利用者にテンプレートであることを見せない（1-7-2）。中では普通のインスタンスが 1 件できる。 -->
-      <button type="button" @click="emit('画像を追加')">素材を追加（画像）</button>
+      <button type="button" @click="emit('addImage')">素材を追加（画像）</button>
       <!-- S7-1: 数字だけを常時見せる。専用の置き場は作らない -->
-      <p class="materials__count">未配置 {{ 未配置キー.length }} 件</p>
+      <p class="materials__count">未配置 {{ unplacedKeys.length }} 件</p>
       <label class="materials__filter">
-        <input v-model="未配置だけ" type="checkbox" />
-        未配置だけ
+        <input v-model="onlyUnplaced" type="checkbox" />
+        onlyUnplaced
       </label>
     </div>
-    <p v-if="表示する一覧.length === 0" class="materials__empty">素材はまだありません</p>
+    <p v-if="visibleParts.length === 0" class="materials__empty">素材はまだありません</p>
     <ul v-else class="materials__list">
       <li
-        v-for="part in 表示する一覧"
+        v-for="part in visibleParts"
         :key="partKeyOf(part.instanceId, part.partId)"
         class="materials__item"
         :data-part-key="partKeyOf(part.instanceId, part.partId)"
-        :data-unplaced="未配置か(part) ? 'true' : 'false'"
+        :data-unplaced="isUnplaced(part) ? 'true' : 'false'"
       >
         <span class="materials__title">{{ part.title }}</span>
-        <span class="materials__form">{{ part.form }}</span>
-        <span class="materials__note">{{ インラインの文(part.body) }}</span>
-        <button type="button" @click="emit('挿入', part)">本文へ挿入</button>
+        <span class="materials__form">{{ FORM_LABELS[part.form] }}</span>
+        <span class="materials__note">{{ inlineText(part.body) }}</span>
+        <button type="button" @click="emit('insert', part)">本文へ挿入</button>
         <!-- ⚠ 差し替えは**本文に触らない**。置かれている全箇所が同時に変わる（S7-3） -->
-        <button type="button" @click="emit('差し替え', part)">差し替え</button>
-        <button type="button" @click="emit('削除', part)">消す</button>
+        <button type="button" @click="emit('replace', part)">差し替え</button>
+        <button type="button" @click="emit('remove', part)">消す</button>
       </li>
     </ul>
   </aside>

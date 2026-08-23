@@ -6,39 +6,39 @@
  *   ドキュメントはパートを**所有しない**ので、「配置しても紐付けが切れない」が構造的に保証される。
  */
 import type { OutputDef } from './outputs'
-import { 組み込みパターン指定か } from './outputs'
-import { 組み込みパターン } from './render'
+import { isPatternOutput } from './outputs'
+import { builtinPatterns } from './render'
 
 /** パートが本文でどんな形を取るか。④の横断集計は v0 の範囲外なので持たない（S4）。 */
-export type PartForm = '独立章' | '本文中' | '図'
+export type PartForm = 'section' | 'inline' | 'figure'
 
 /**
  * フォームに出る入力欄の型（1-3 の表）。
- * ⚠ v0 で**フォームまで実装済み**なのはスカラー（`文字列` / `画像`）だけ。
+ * ⚠ v0 で**フォームまで実装済み**なのはスカラー（`string` / `image`）だけ。
  *   残りは型として宣言されているが、入力 UI は後続フェーズの責務。
  */
-export const フィールドの型の一覧 = [
-  '文字列',
-  '整数',
-  '真偽',
-  '長文',
-  '列挙',
-  '配列',
-  '入れ子',
-  '座標',
-  '方向',
-  '辺参照',
-  '参照',
-  'いずれか',
-  '画像',
-  '導出値',
+export const FIELD_TYPES = [
+  'string',
+  'integer',
+  'boolean',
+  'text',
+  'enum',
+  'array',
+  'object',
+  'coordinate',
+  'direction',
+  'edgeRef',
+  'ref',
+  'oneOf',
+  'image',
+  'derived',
 ] as const
 
-export type FieldType = (typeof フィールドの型の一覧)[number]
+export type FieldType = (typeof FIELD_TYPES)[number]
 
 export interface FieldDef {
   key: string
-  型: FieldType
+  type: FieldType
 }
 
 export interface TemplateDefinition {
@@ -77,7 +77,7 @@ export interface TemplateInstance {
  *     自由 HTML パターンを入れるときに `{ 種別: 'HTML' }` としてこの union に合流する
  *     （そのとき 1-4 の iframe sandbox 契約が効く）。
  */
-export type Inline = { 種別: 'テキスト'; 文: string } | { 種別: '画像'; 画像: Blob; 代替文: string }
+export type Inline = { kind: 'text'; text: string } | { kind: 'image'; image: Blob; alt: string }
 
 /** 導出したパート。ドキュメントはこれを「参照」だけで持つ（実体は持たない）。 */
 export interface Part {
@@ -94,8 +94,8 @@ export function partKeyOf(instanceId: string, partId: string): string {
 }
 
 /** パートの中身を、表示用の 1 本のテキストへ畳む（一覧・テストの照合用）。 */
-export function インラインの文(body: Inline[]): string {
-  return body.map((item) => (item.種別 === 'テキスト' ? item.文 : item.代替文)).join('')
+export function inlineText(body: Inline[]): string {
+  return body.map((item) => (item.kind === 'text' ? item.text : item.alt)).join('')
 }
 
 /**
@@ -106,25 +106,25 @@ export function インラインの文(body: Inline[]): string {
 export function derivePartsOf(instance: TemplateInstance, def: TemplateDefinition): Part[] {
   const parts: Part[] = []
   for (const output of def.outputs) {
-    if (組み込みパターン指定か(output)) {
-      const 描く = 組み込みパターン[output.pattern]
-      if (!描く) {
+    if (isPatternOutput(output)) {
+      const render = builtinPatterns[output.pattern]
+      if (!render) {
         // ⚠ 握りつぶさない。定義の検証（template/schema.ts）を通っていれば到達しない経路で、
         //   ここに来たなら「検証を通さずに登録された定義がある」という別の不具合である。
         throw new Error(
           `テンプレ定義「${def.id}」の outputs に未知のパターン「${output.pattern}」があります`,
         )
       }
-      parts.push(...描く(instance, def))
+      parts.push(...render(instance, def))
       continue
     }
-    if (output.kind === '固定') {
+    if (output.kind === 'fixed') {
       parts.push({
         instanceId: instance.id,
         partId: output.key,
         form: output.form,
         title: output.label,
-        body: [{ 種別: 'テキスト', 文: String(instance.data[output.key] ?? '') }],
+        body: [{ kind: 'text', text: String(instance.data[output.key] ?? '') }],
       })
       continue
     }
@@ -136,7 +136,7 @@ export function derivePartsOf(instance: TemplateInstance, def: TemplateDefinitio
         partId: `${output.key}:${row.id}`,
         form: output.form,
         title: `${output.label} ${String(row.name ?? row.id)}`,
-        body: [{ 種別: 'テキスト', 文: String(row.body ?? '') }],
+        body: [{ kind: 'text', text: String(row.body ?? '') }],
       })
     }
   }

@@ -3,8 +3,8 @@
   "name": "画像",
   "version": "0.1.0",
   "fields": [
-    { "key": "表示名", "型": "文字列" },
-    { "key": "画像", "型": "画像" }
+    { "key": "caption", "type": "string" },
+    { "key": "image", "type": "image" }
   ],
   "outputs": [{ "pattern": "builtin:image" }]
 }

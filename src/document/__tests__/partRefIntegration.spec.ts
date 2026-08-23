@@ -37,19 +37,19 @@ import { usePartStore } from '../../store/partStore'
 import { analyzePlacement } from '../placement'
 import type { TemplateDefinition, TemplateInstance } from '../../template/model'
 
-const 定義: TemplateDefinition = {
+const definition: TemplateDefinition = {
   id: 'みほん',
   name: 'みほんテンプレ',
   version: '0.1.0',
   fields: [],
   outputs: [
-    { key: 'まえがき', kind: '固定', label: '全体の説明', form: '独立章' },
-    { key: '区画', kind: '配列ごと', source: '区画', label: '区画', form: '独立章' },
-    { key: 'ぜんたいず', kind: '固定', label: '全体図', form: '図' },
+    { key: 'まえがき', kind: 'fixed', label: '全体の説明', form: 'section' },
+    { key: '区画', kind: 'perItem', source: '区画', label: '区画', form: 'section' },
+    { key: 'ぜんたいず', kind: 'fixed', label: '全体図', form: 'figure' },
   ],
 }
 
-function インスタンス(): TemplateInstance {
+function makeInstance(): TemplateInstance {
   return {
     id: 'i1',
     templateId: 'みほん',
@@ -75,71 +75,71 @@ const Host = defineComponent({
 })
 
 /** strict な index アクセスを毎回書かないための小道具（テスト内でのみ使う）。 */
-function 必ず<T>(value: T | undefined | null, what: string): T {
+function must<T>(value: T | undefined | null, what: string): T {
   if (value === undefined || value === null) throw new Error(`${what} が見つかりません`)
   return value
 }
 
-interface 版 {
-  名前: string
-  ノード名: string
+interface variant {
+  label: string
+  nodeName: string
   /** 「参照を 2 箇所に置いた本文」。両版で **同じ地の文**を持つ */
-  本文: () => object
+  body: () => object
   /** 末尾に 1 個足すときの挿入位置（inline はブロックの直下に置けない） */
-  末尾: (doc: PMNode) => number
+  endPos: (doc: PMNode) => number
 }
 
-function 参照(ノード名: string, instanceId: string, partId: string) {
-  return { type: ノード名, attrs: { instanceId, partId } }
+function makeRef(nodeName: string, instanceId: string, partId: string) {
+  return { type: nodeName, attrs: { instanceId, partId } }
 }
 
-function 文(text: string) {
+function textNode(text: string) {
   return { type: 'text', text }
 }
 
-const 版たち: 版[] = [
+const variants: variant[] = [
   {
-    名前: 'block 版（P0 で実証済み）',
-    ノード名: PART_REF_NODE,
-    本文: () => ({
+    label: 'block 版（P0 で実証済み）',
+    nodeName: PART_REF_NODE,
+    body: () => ({
       type: 'doc',
       content: [
-        { type: 'paragraph', content: [文('手書きの前段')] },
-        参照(PART_REF_NODE, 'i1', '区画:k2'),
-        { type: 'paragraph', content: [文('手書きの間の文章')] },
-        参照(PART_REF_NODE, 'i1', '区画:k2'), // S7-3: 同じパートを 2 箇所に置く
-        { type: 'paragraph', content: [文('手書きの後段')] },
+        { type: 'paragraph', content: [textNode('手書きの前段')] },
+        makeRef(PART_REF_NODE, 'i1', '区画:k2'),
+        { type: 'paragraph', content: [textNode('手書きの間の文章')] },
+        makeRef(PART_REF_NODE, 'i1', '区画:k2'), // S7-3: 同じパートを 2 箇所に置く
+        { type: 'paragraph', content: [textNode('手書きの後段')] },
       ],
     }),
-    末尾: (doc) => doc.content.size,
+    endPos: (doc) => doc.content.size,
   },
   {
-    名前: 'inline 版（P2 で初めて当てる）',
-    ノード名: PART_REF_INLINE_NODE,
-    本文: () => ({
+    label: 'inline 版（P2 で初めて当てる）',
+    nodeName: PART_REF_INLINE_NODE,
+    body: () => ({
       type: 'doc',
       content: [
         // ⭐ 完了条件 #2 その 1: **文の途中**
         {
           type: 'paragraph',
           content: [
-            文('手書きの前段'),
-            参照(PART_REF_INLINE_NODE, 'i1', '区画:k2'),
-            文('のつづき'),
+            textNode('手書きの前段'),
+            makeRef(PART_REF_INLINE_NODE, 'i1', '区画:k2'),
+            textNode('のつづき'),
           ],
         },
-        { type: 'paragraph', content: [文('手書きの間の文章')] },
+        { type: 'paragraph', content: [textNode('手書きの間の文章')] },
         // ⭐ 完了条件 #2 その 2: **単独の段落**（1-7-3 が「ブロックの素材」を表す形と決めたもの）
-        { type: 'paragraph', content: [参照(PART_REF_INLINE_NODE, 'i1', '区画:k2')] },
-        { type: 'paragraph', content: [文('手書きの後段')] },
+        { type: 'paragraph', content: [makeRef(PART_REF_INLINE_NODE, 'i1', '区画:k2')] },
+        { type: 'paragraph', content: [textNode('手書きの後段')] },
       ],
     }),
     // ⚠ inline ノードは doc の直下に入れない。末尾の段落の**中**へ挿す。
-    末尾: (doc) => doc.content.size - 1,
+    endPos: (doc) => doc.content.size - 1,
   },
 ]
 
-describe.each(版たち)('$名前', (版) => {
+describe.each(variants)('$label', (variant) => {
   let pinia: Pinia
   let editor: Editor
   let wrapper: VueWrapper
@@ -148,12 +148,12 @@ describe.each(版たち)('$名前', (版) => {
     pinia = createPinia()
     setActivePinia(pinia)
     const store = usePartStore()
-    store.registerDefinition(定義)
-    store.upsertInstance(インスタンス())
+    store.registerDefinition(definition)
+    store.upsertInstance(makeInstance())
 
     editor = new Editor({
       extensions: [Document, Paragraph, Text, PartRef, PartRefInline],
-      content: 版.本文(),
+      content: variant.body(),
     })
     wrapper = mount(Host, { props: { editor }, global: { plugins: [pinia] } })
   })
@@ -178,7 +178,7 @@ describe.each(版たち)('$名前', (版) => {
 
     it('配列に 1 件足すとパートも 1 個増える', () => {
       const store = usePartStore()
-      const inst = 必ず(store.instances.i1, 'インスタンス i1')
+      const inst = must(store.instances.i1, 'インスタンス i1')
       ;(inst.data.区画 as unknown[]).push({ id: 'k4', name: 'ようかん', body: 'ようかんの説明' })
       expect(store.parts).toHaveLength(6)
     })
@@ -196,12 +196,12 @@ describe.each(版たち)('$名前', (版) => {
 
     it('ストア側の値を変えると、置かれた 2 箇所とも変わる', async () => {
       const store = usePartStore()
-      const 区画 = 必ず(store.instances.i1, 'インスタンス i1').data.区画 as Array<
+      const sections = must(store.instances.i1, 'インスタンス i1').data.区画 as Array<
         Record<string, unknown>
       >
-      const 対象 = 必ず(区画[1], '区画 k2')
-      対象.name = 'きんつば'
-      対象.body = 'きんつばの説明'
+      const target = must(sections[1], '区画 k2')
+      target.name = 'きんつば'
+      target.body = 'きんつばの説明'
       await nextTick()
 
       const views = wrapper.findAll('.part-ref')
@@ -216,7 +216,7 @@ describe.each(版たち)('$名前', (版) => {
   describe('P0-3: データから消えたら、置かれた参照を行方不明として検出できる', () => {
     it('配列から要素を消すと dangling に出る', async () => {
       const store = usePartStore()
-      const inst = 必ず(store.instances.i1, 'インスタンス i1')
+      const inst = must(store.instances.i1, 'インスタンス i1')
       inst.data.区画 = (inst.data.区画 as Array<Record<string, unknown>>).filter(
         (r) => r.id !== 'k2',
       )
@@ -246,7 +246,10 @@ describe.each(版たち)('$名前', (版) => {
       const store = usePartStore()
       editor
         .chain()
-        .insertContentAt(版.末尾(editor.state.doc), 参照(版.ノード名, 'i1', '区画:k1'))
+        .insertContentAt(
+          variant.endPos(editor.state.doc),
+          makeRef(variant.nodeName, 'i1', '区画:k1'),
+        )
         .run()
       expect(analyzePlacement(editor.state.doc, store.parts).unplaced).toHaveLength(3)
     })
@@ -258,11 +261,11 @@ describe.each(版たち)('$名前', (版) => {
       expect(before).toHaveLength(2)
 
       // 先頭側の参照を、末尾へ移す（ドラッグ操作の実体はこの 2 手）
-      const target = 必ず(before[0], '移動元の参照')
-      const node = 必ず(editor.state.doc.nodeAt(target.pos), '移動元のノード')
+      const target = must(before[0], '移動元の参照')
+      const node = must(editor.state.doc.nodeAt(target.pos), '移動元のノード')
 
       const tr = editor.state.tr.delete(target.pos, target.pos + node.nodeSize)
-      tr.insert(版.末尾(tr.doc), node)
+      tr.insert(variant.endPos(tr.doc), node)
       editor.view.dispatch(tr)
       await nextTick()
 
@@ -270,8 +273,8 @@ describe.each(版たち)('$名前', (版) => {
       expect(after).toHaveLength(2)
       expect(after.map((r) => `${r.instanceId}/${r.partId}`)).toEqual(['i1/区画:k2', 'i1/区画:k2'])
       // 位置は変わっている（＝本当に移動した）
-      expect(必ず(after[1], '移動後の 2 個目').pos).toBeGreaterThan(
-        必ず(before[1], '移動前の 2 個目').pos,
+      expect(must(after[1], '移動後の 2 個目').pos).toBeGreaterThan(
+        must(before[1], '移動前の 2 個目').pos,
       )
       for (const v of wrapper.findAll('.part-ref')) {
         expect(v.text()).toContain('どらやき')
@@ -298,8 +301,8 @@ describe('inline 版の DOM', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const store = usePartStore()
-    store.registerDefinition(定義)
-    store.upsertInstance(インスタンス())
+    store.registerDefinition(definition)
+    store.upsertInstance(makeInstance())
 
     const editor = new Editor({
       extensions: [Document, Paragraph, Text, PartRef, PartRefInline],
@@ -308,7 +311,11 @@ describe('inline 版の DOM', () => {
         content: [
           {
             type: 'paragraph',
-            content: [文('まえ'), 参照(PART_REF_INLINE_NODE, 'i1', '区画:k2'), 文('あと')],
+            content: [
+              textNode('まえ'),
+              makeRef(PART_REF_INLINE_NODE, 'i1', '区画:k2'),
+              textNode('あと'),
+            ],
           },
         ],
       },
@@ -317,10 +324,10 @@ describe('inline 版の DOM', () => {
     // ⚠ NodeView（Vue コンポーネント）は次の tick で挿さる。
     await nextTick()
 
-    const 参照要素 = 必ず(wrapper.find('.part-ref').element, '参照の要素')
-    expect(参照要素.tagName).toBe('SPAN')
-    expect(必ず(wrapper.find('p').element.querySelector('.part-ref'), '段落の中の参照')).toBe(
-      参照要素,
+    const refElement = must(wrapper.find('.part-ref').element, '参照の要素')
+    expect(refElement.tagName).toBe('SPAN')
+    expect(must(wrapper.find('p').element.querySelector('.part-ref'), '段落の中の参照')).toBe(
+      refElement,
     )
 
     wrapper.unmount()

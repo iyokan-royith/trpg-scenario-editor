@@ -6,90 +6,90 @@
  *   → 見つけた問題は**全部集めてから**返す（最初の 1 件で止めると、直しては読ませ直す往復になる）。
  *   → メッセージには必ず **出所**（どのファイルか）と **場所**（`fields[1].型` のような道順）を入れる。
  */
-import { フィールドの型の一覧, type FieldDef, type TemplateDefinition } from './model'
+import { FIELD_TYPES, type FieldDef, type TemplateDefinition } from './model'
 import type { OutputDef } from './outputs'
-import { 組み込みパターン名の一覧 } from './render'
+import { builtinPatternNames } from './render'
 
 export class TemplateDefinitionError extends Error {
-  readonly 出所: string
-  readonly 問題: string[]
+  readonly source: string
+  readonly problems: string[]
 
-  constructor(出所: string, 問題: string[]) {
-    super(`${出所} を読めませんでした:\n- ${問題.join('\n- ')}`)
+  constructor(source: string, problems: string[]) {
+    super(`${source} を読めませんでした:\n- ${problems.join('\n- ')}`)
     this.name = 'TemplateDefinitionError'
-    this.出所 = 出所
-    this.問題 = 問題
+    this.source = source
+    this.problems = problems
   }
 }
 
-const フォーム一覧 = ['独立章', '本文中', '図']
+const PART_FORMS = ['section', 'inline', 'figure']
 
-function 素のオブジェクトか(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function 文字列を検める(
-  値: unknown,
-  道順: string,
-  問題: string[],
-  選択肢?: readonly string[],
+function checkString(
+  value: unknown,
+  path: string,
+  problems: string[],
+  choices?: readonly string[],
 ): void {
-  if (typeof 値 !== 'string' || 値 === '') {
-    問題.push(`${道順} が空か、文字列ではありません（${JSON.stringify(値)}）`)
+  if (typeof value !== 'string' || value === '') {
+    problems.push(`${path} が空か、文字列ではありません（${JSON.stringify(value)}）`)
     return
   }
-  if (選択肢 && !選択肢.includes(値)) {
-    問題.push(`${道順} が未知の値です（「${値}」）。使えるのは ${選択肢.join(' / ')} です`)
+  if (choices && !choices.includes(value)) {
+    problems.push(`${path} が未知の値です（「${value}」）。使えるのは ${choices.join(' / ')} です`)
   }
 }
 
-function fieldsを検める(値: unknown, 問題: string[]): void {
-  if (!Array.isArray(値)) {
-    問題.push(`fields が配列ではありません（${JSON.stringify(値)}）`)
+function checkFields(value: unknown, problems: string[]): void {
+  if (!Array.isArray(value)) {
+    problems.push(`fields が配列ではありません（${JSON.stringify(value)}）`)
     return
   }
-  const 見たキー = new Set<string>()
-  値.forEach((field, i) => {
-    const 道順 = `fields[${i}]`
-    if (!素のオブジェクトか(field)) {
-      問題.push(`${道順} がオブジェクトではありません（${JSON.stringify(field)}）`)
+  const seenKeys = new Set<string>()
+  value.forEach((field, i) => {
+    const path = `fields[${i}]`
+    if (!isPlainObject(field)) {
+      problems.push(`${path} がオブジェクトではありません（${JSON.stringify(field)}）`)
       return
     }
-    文字列を検める(field.key, `${道順}.key`, 問題)
-    文字列を検める(field.型, `${道順}.型`, 問題, フィールドの型の一覧)
+    checkString(field.key, `${path}.key`, problems)
+    checkString(field.type, `${path}.type`, problems, FIELD_TYPES)
     if (typeof field.key === 'string') {
       // ⚠ キーの重複は「値が黙って上書きされる」形で効くので、型の誤りと同じ重さで拾う。
-      if (見たキー.has(field.key)) 問題.push(`${道順}.key が重複しています（「${field.key}」）`)
-      見たキー.add(field.key)
+      if (seenKeys.has(field.key)) problems.push(`${path}.key が重複しています（「${field.key}」）`)
+      seenKeys.add(field.key)
     }
   })
 }
 
-function outputsを検める(値: unknown, 問題: string[]): void {
-  if (!Array.isArray(値)) {
-    問題.push(`outputs が配列ではありません（${JSON.stringify(値)}）`)
+function checkOutputs(value: unknown, problems: string[]): void {
+  if (!Array.isArray(value)) {
+    problems.push(`outputs が配列ではありません（${JSON.stringify(value)}）`)
     return
   }
-  if (値.length === 0) 問題.push('outputs が空です（パートを 1 つも生まない定義になります）')
-  値.forEach((output, i) => {
-    const 道順 = `outputs[${i}]`
-    if (!素のオブジェクトか(output)) {
-      問題.push(`${道順} がオブジェクトではありません（${JSON.stringify(output)}）`)
+  if (value.length === 0) problems.push('outputs が空です（パートを 1 つも生まない定義になります）')
+  value.forEach((output, i) => {
+    const path = `outputs[${i}]`
+    if (!isPlainObject(output)) {
+      problems.push(`${path} がオブジェクトではありません（${JSON.stringify(output)}）`)
       return
     }
     if ('pattern' in output) {
-      文字列を検める(output.pattern, `${道順}.pattern`, 問題, 組み込みパターン名の一覧())
+      checkString(output.pattern, `${path}.pattern`, problems, builtinPatternNames())
       return
     }
     if (!('kind' in output)) {
-      問題.push(`${道順} に kind も pattern もありません（どちらか一方が要ります）`)
+      problems.push(`${path} に kind も pattern もありません（どちらか一方が要ります）`)
       return
     }
-    文字列を検める(output.kind, `${道順}.kind`, 問題, ['固定', '配列ごと'])
-    文字列を検める(output.key, `${道順}.key`, 問題)
-    文字列を検める(output.label, `${道順}.label`, 問題)
-    文字列を検める(output.form, `${道順}.form`, 問題, フォーム一覧)
-    if (output.kind === '配列ごと') 文字列を検める(output.source, `${道順}.source`, 問題)
+    checkString(output.kind, `${path}.kind`, problems, ['fixed', 'perItem'])
+    checkString(output.key, `${path}.key`, problems)
+    checkString(output.label, `${path}.label`, problems)
+    checkString(output.form, `${path}.form`, problems, PART_FORMS)
+    if (output.kind === 'perItem') checkString(output.source, `${path}.source`, problems)
   })
 }
 
@@ -97,26 +97,26 @@ function outputsを検める(値: unknown, 問題: string[]): void {
  * 素のデータをテンプレ定義として検める。
  * 問題があれば `TemplateDefinitionError` を投げる（問題は全件入っている）。
  */
-export function テンプレ定義を検める(値: unknown, 出所: string): TemplateDefinition {
-  const 問題: string[] = []
-  if (!素のオブジェクトか(値)) {
-    throw new TemplateDefinitionError(出所, [
-      `いちばん外側がオブジェクトではありません（${JSON.stringify(値)}）`,
+export function validateTemplateDefinition(value: unknown, source: string): TemplateDefinition {
+  const problems: string[] = []
+  if (!isPlainObject(value)) {
+    throw new TemplateDefinitionError(source, [
+      `いちばん外側がオブジェクトではありません（${JSON.stringify(value)}）`,
     ])
   }
-  文字列を検める(値.id, 'id', 問題)
-  文字列を検める(値.name, 'name', 問題)
-  文字列を検める(値.version, 'version', 問題)
-  fieldsを検める(値.fields, 問題)
-  outputsを検める(値.outputs, 問題)
+  checkString(value.id, 'id', problems)
+  checkString(value.name, 'name', problems)
+  checkString(value.version, 'version', problems)
+  checkFields(value.fields, problems)
+  checkOutputs(value.outputs, problems)
 
-  if (問題.length > 0) throw new TemplateDefinitionError(出所, 問題)
+  if (problems.length > 0) throw new TemplateDefinitionError(source, problems)
 
   return {
-    id: 値.id as string,
-    name: 値.name as string,
-    version: 値.version as string,
-    fields: 値.fields as FieldDef[],
-    outputs: 値.outputs as OutputDef[],
+    id: value.id as string,
+    name: value.name as string,
+    version: value.version as string,
+    fields: value.fields as FieldDef[],
+    outputs: value.outputs as OutputDef[],
   }
 }

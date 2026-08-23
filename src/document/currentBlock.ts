@@ -2,7 +2,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
-export const 現在のブロックキー = new PluginKey<boolean>('現在のブロック')
+export const currentBlockKey = new PluginKey<boolean>('currentBlock')
 
 /**
  * 「いまカーソルが居るブロック」に印を付ける（要望1・2026-08-23）。
@@ -27,44 +27,44 @@ export const 現在のブロックキー = new PluginKey<boolean>('現在のブ�
  *     この機能はテストで 1 度も通らないまま緑になる**
  */
 export const CurrentBlock = Extension.create({
-  name: '現在のブロック',
+  name: 'currentBlock',
 
   addProseMirrorPlugins() {
     return [
       new Plugin<boolean>({
-        key: 現在のブロックキー,
+        key: currentBlockKey,
 
         state: {
           init: () => false,
-          apply(tr, 前の値) {
-            const 合図 = tr.getMeta(現在のブロックキー)
-            return typeof 合図 === 'boolean' ? 合図 : 前の値
+          apply(tr, previous) {
+            const signal = tr.getMeta(currentBlockKey)
+            return typeof signal === 'boolean' ? signal : previous
           },
         },
 
         props: {
           handleDOMEvents: {
             focus(view) {
-              view.dispatch(view.state.tr.setMeta(現在のブロックキー, true))
+              view.dispatch(view.state.tr.setMeta(currentBlockKey, true))
               return false
             },
             blur(view) {
-              view.dispatch(view.state.tr.setMeta(現在のブロックキー, false))
+              view.dispatch(view.state.tr.setMeta(currentBlockKey, false))
               return false
             },
           },
 
           decorations(state) {
-            if (!現在のブロックキー.getState(state)) return DecorationSet.empty
+            if (!currentBlockKey.getState(state)) return DecorationSet.empty
 
             const { from, to } = state.selection
             const decorations: Decoration[] = []
             state.doc.forEach((node, pos) => {
-              const 終わり = pos + node.nodeSize
+              const end = pos + node.nodeSize
               // 選択範囲に少しでも重なっているブロックに印を付ける
               // （複数ブロックにまたがる選択もそのまま示せる）
-              if (終わり <= from || pos >= to) return
-              decorations.push(Decoration.node(pos, 終わり, { class: '現在のブロック' }))
+              if (end <= from || pos >= to) return
+              decorations.push(Decoration.node(pos, end, { class: 'current-block' }))
             })
             return DecorationSet.create(state.doc, decorations)
           },

@@ -7,10 +7,10 @@
 import { describe, it, expect } from 'vitest'
 import { documentSchema } from '../schema'
 import { docToMd, markdownSlice, mdToDoc } from '../markdown'
-import { 見出しの題名, 見出しレベル } from '../heading'
+import { headingTitle, headingLevel } from '../heading'
 import { PART_REF_INLINE_NODE, PART_REF_NODE } from '../partRefExtension'
 
-const みほんのmd = [
+const sampleMd = [
   '# あかしょう',
   '',
   'あかの本文です。**ふとじ**と*ななめ*が混ざります。',
@@ -38,7 +38,7 @@ const みほんのmd = [
   'あおの本文です。',
 ].join('\n')
 
-function ブロックの種類(doc: ReturnType<typeof mdToDoc>): string[] {
+function blockKinds(doc: ReturnType<typeof mdToDoc>): string[] {
   const out: string[] = []
   doc.forEach((node) => out.push(node.type.name))
   return out
@@ -46,8 +46,8 @@ function ブロックの種類(doc: ReturnType<typeof mdToDoc>): string[] {
 
 describe('P1-4: md はブロックに分解される（1 個のテキスト塊にならない）', () => {
   it('見出し・段落・箇条書き・引用・コードブロックがそれぞれのブロックになる', () => {
-    const doc = mdToDoc(みほんのmd)
-    expect(ブロックの種類(doc)).toEqual([
+    const doc = mdToDoc(sampleMd)
+    expect(blockKinds(doc)).toEqual([
       'heading',
       'paragraph',
       'heading',
@@ -63,13 +63,13 @@ describe('P1-4: md はブロックに分解される（1 個のテキスト塊�
   })
 
   it('見出しのレベルが保たれる', () => {
-    const doc = mdToDoc(みほんのmd)
+    const doc = mdToDoc(sampleMd)
     expect(doc.child(0).attrs.level).toBe(1)
     expect(doc.child(2).attrs.level).toBe(2)
   })
 
   it('強調・リンク・インラインコードがマークになる', () => {
-    const doc = mdToDoc(みほんのmd)
+    const doc = mdToDoc(sampleMd)
     const marks = new Set<string>()
     doc.descendants((node) => {
       for (const m of node.marks) marks.add(m.type.name)
@@ -81,7 +81,7 @@ describe('P1-4: md はブロックに分解される（1 個のテキスト塊�
   })
 
   it('貼り付け用の Slice が複数ブロックを持つ（＝塊にならない）', () => {
-    const slice = markdownSlice(みほんのmd)
+    const slice = markdownSlice(sampleMd)
     expect(slice.content.childCount).toBeGreaterThan(1)
     expect(slice.openStart).toBe(0)
     expect(slice.openEnd).toBe(0)
@@ -96,34 +96,34 @@ describe('P1-4: md はブロックに分解される（1 個のテキスト塊�
 
 describe('P1-5: md へ書き出して読み戻すと一致する（往復）', () => {
   it('doc → md → doc が同じドキュメントになる', () => {
-    const もと = mdToDoc(みほんのmd)
-    const 戻り = mdToDoc(docToMd(もと))
+    const original = mdToDoc(sampleMd)
+    const roundTrip = mdToDoc(docToMd(original))
     // ⚠ md 文字列の等値では見ない（記号の揺れで落ちる）。ドキュメントとして同じかを見る。
-    expect(戻り.eq(もと)).toBe(true)
+    expect(roundTrip.eq(original)).toBe(true)
   })
 
   it('見出し階層と本文が一致する', () => {
-    const 戻り = mdToDoc(docToMd(mdToDoc(みほんのmd)))
-    const 見出し: Array<[number, string]> = []
-    戻り.forEach((node) => {
+    const roundTrip = mdToDoc(docToMd(mdToDoc(sampleMd)))
+    const heading: Array<[number, string]> = []
+    roundTrip.forEach((node) => {
       if (node.type.name === 'heading') {
         // ⚠ 記号は本文に入っているので、題名の照合では剥がす（CONCEPT Q2 改訂）
-        見出し.push([見出しレベル(node.textContent)!, 見出しの題名(node.textContent)])
+        heading.push([headingLevel(node.textContent)!, headingTitle(node.textContent)])
       }
     })
-    expect(見出し).toEqual([
+    expect(heading).toEqual([
       [1, 'あかしょう'],
       [2, 'あかのせつ'],
       [1, 'あおしょう'],
     ])
-    expect(戻り.textContent).toContain('あかの本文です。')
-    expect(戻り.textContent).toContain('あおの本文です。')
+    expect(roundTrip.textContent).toContain('あかの本文です。')
+    expect(roundTrip.textContent).toContain('あおの本文です。')
   })
 
   it('md → doc → md が安定する（2 周目で文字列が変わらない）', () => {
-    const 一周 = docToMd(mdToDoc(みほんのmd))
-    const 二周 = docToMd(mdToDoc(一周))
-    expect(二周).toBe(一周)
+    const firstPass = docToMd(mdToDoc(sampleMd))
+    const secondPass = docToMd(mdToDoc(firstPass))
+    expect(secondPass).toBe(firstPass)
   })
 })
 
@@ -146,16 +146,16 @@ describe('P1-5 の穴を塞ぐ: パート参照を黙って捨てない', () => 
  *   アが破れているなら **md 書き出しに記号の二重化（`## ## みだし`）が出る**はず。
  */
 describe('P1-1 改訂: 記号は本文にあり、md では二重にならない', () => {
-  const 見出し入り = ['# あかしょう', '', 'ほんぶん。', '', '### ふかいせつ'].join('\n')
+  const withHeading = ['# あかしょう', '', 'ほんぶん。', '', '### ふかいせつ'].join('\n')
 
   it('md を読むと、記号が本文のテキストとして入っている', () => {
-    const doc = mdToDoc(見出し入り)
+    const doc = mdToDoc(withHeading)
     expect(doc.child(0).textContent).toBe('# あかしょう')
     expect(doc.child(2).textContent).toBe('### ふかいせつ')
   })
 
   it('⭐ 書き出しても記号が二重にならない', () => {
-    const md = docToMd(mdToDoc(見出し入り))
+    const md = docToMd(mdToDoc(withHeading))
     expect(md).not.toContain('# # ')
     expect(md).not.toContain('## ## ')
     expect(md).toContain('# あかしょう')
@@ -163,14 +163,14 @@ describe('P1-1 改訂: 記号は本文にあり、md では二重にならない
   })
 
   it('⭐ 記号がエスケープされない（`\\#` にならない）', () => {
-    expect(docToMd(mdToDoc(見出し入り))).not.toContain('\\#')
+    expect(docToMd(mdToDoc(withHeading))).not.toContain('\\#')
   })
 
   it('往復しても記号は 1 組のまま（2 周しても増えない）', () => {
-    const 一周 = docToMd(mdToDoc(見出し入り))
-    const 二周 = docToMd(mdToDoc(一周))
-    expect(二周).toBe(一周)
-    expect(mdToDoc(二周).child(0).textContent).toBe('# あかしょう')
+    const firstPass = docToMd(mdToDoc(withHeading))
+    const secondPass = docToMd(mdToDoc(firstPass))
+    expect(secondPass).toBe(firstPass)
+    expect(mdToDoc(secondPass).child(0).textContent).toBe('# あかしょう')
   })
 
   it('記号を持たない heading（外から来た JSON）でも、記号を補って出す', () => {
@@ -191,7 +191,7 @@ describe('inline 版の参照も md で黙って消えない', () => {
     const doc = documentSchema.node('doc', null, [
       documentSchema.node('paragraph', null, [
         documentSchema.text('まえ'),
-        documentSchema.node(PART_REF_INLINE_NODE, { instanceId: 'i1', partId: '画像' }),
+        documentSchema.node(PART_REF_INLINE_NODE, { instanceId: 'i1', partId: 'image' }),
         documentSchema.text('あと'),
       ]),
     ])

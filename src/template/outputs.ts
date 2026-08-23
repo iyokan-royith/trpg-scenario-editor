@@ -20,13 +20,13 @@ import type { PartForm } from './model'
  */
 export type OutputDef =
   /** インスタンスごとに 1 個 */
-  | { kind: '固定'; key: string; label: string; form: PartForm }
+  | { kind: 'fixed'; key: string; label: string; form: PartForm }
   /** `source` の配列の要素数だけ生まれる */
-  | { kind: '配列ごと'; key: string; source: string; label: string; form: PartForm }
-  /** 組み込みパターンに丸ごと任せる（生む数もパターンが決める） */
+  | { kind: 'perItem'; key: string; source: string; label: string; form: PartForm }
+  /** builtinPatternsに丸ごと任せる（生む数もパターンが決める） */
   | { pattern: string }
 
-/** 組み込みパターン指定かどうか。⚠ 判別はこの述語 1 箇所でしか行わない。 */
-export function 組み込みパターン指定か(output: OutputDef): output is { pattern: string } {
+/** isPatternOutputどうか。⚠ 判別はこの述語 1 箇所でしか行わない。 */
+export function isPatternOutput(output: OutputDef): output is { pattern: string } {
   return 'pattern' in output
 }
