@@ -8,9 +8,18 @@
  *    ラッパライブラリを入れる理由が無い（捨てるときはこのファイルを消すだけ）。
  */
 
+import type { TemplateInstance } from '../template/model'
+
 const DB_NAME = 'trpg-scenario-editor'
-const DB_VERSION = 1
+/**
+ * ⚠ 2 へ上げたのは素材（テンプレインスタンス）のストアを足したため。
+ *   **既にある `documents` は作り直さない**——作り直すと、前の版で書いた本文が消える。
+ *   `onupgradeneeded` の中で「無ければ作る」しか書かないのはそのため。
+ */
+const DB_VERSION = 2
 const STORE_NAME = 'documents'
+/** 素材（＝テンプレインスタンス）。画像の Blob はこの中に入る（DESIGN 1-4） */
+const INSTANCE_STORE_NAME = 'instances'
 
 /** v0 は 1 ドキュメントだけを扱う（CONCEPT Q5: 1 枚の連続文書）。 */
 export const CURRENT_DOCUMENT_KEY = 'current'
@@ -41,6 +50,9 @@ function openDatabase(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'key' })
       }
+      if (!db.objectStoreNames.contains(INSTANCE_STORE_NAME)) {
+        db.createObjectStore(INSTANCE_STORE_NAME, { keyPath: 'id' })
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('IndexedDB を開けませんでした'))
@@ -50,11 +62,12 @@ function openDatabase(): Promise<IDBDatabase> {
 async function withStore<T>(
   mode: IDBTransactionMode,
   run: (store: IDBObjectStore) => Promise<T>,
+  name: string = STORE_NAME,
 ): Promise<T> {
   const db = await openDatabase()
   try {
-    const tx = db.transaction(STORE_NAME, mode)
-    const result = await run(tx.objectStore(STORE_NAME))
+    const tx = db.transaction(name, mode)
+    const result = await run(tx.objectStore(name))
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error ?? new Error('IndexedDB のトランザクションに失敗しました'))
@@ -85,6 +98,83 @@ export async function clearDocument(key = CURRENT_DOCUMENT_KEY): Promise<void> {
   await withStore('readwrite', async (store) => {
     await requestToPromise(store.delete(key))
   })
+}
+
+/**
+ * 保存される素材の形。
+ *
+ * ⚠⚠ **画像は「バイト列＋MIME 型」で入れる（Blob そのものを入れない）。**
+ *   IndexedDB は仕様上 Blob を持てるが、**その経路はこのリポジトリのテスト環境では
+ *   1 行も通せない**——jsdom の Blob は Node の構造化複製が知らないオブジェクトで、
+ *   `structuredClone(blob)` が中身の無い `{}` を返す（実測）。
+ *   Blob のまま入れると **完了条件 #7 が「実ブラウザで手で触るまで未確認」のまま**になる。
+ *   → バイト列なら同じ経路をテストで通せる。data URL と違い**太らず、非可逆でもない**。
+ *
+ * ⚠ 変換はこのファイル（保存の境界）の中だけで起きる。
+ *   `TemplateInstance.images: Record<string, Blob>` はアプリ側では最後まで Blob のまま。
+ *
+ * ⚠ パートは保存しない（導出値・1-7-4）。保存するのはインスタンスだけ。
+ */
+interface StoredInstance {
+  id: string
+  templateId: string
+  data: Record<string, unknown>
+  images: Record<string, { bytes: ArrayBuffer; type: string }>
+}
+
+export async function saveInstance(instance: TemplateInstance): Promise<void> {
+  const images: StoredInstance['images'] = {}
+  for (const [key, blob] of Object.entries(instance.images)) {
+    images[key] = { bytes: await blob.arrayBuffer(), type: blob.type }
+  }
+  const record: StoredInstance = {
+    id: instance.id,
+    templateId: instance.templateId,
+    data: instance.data,
+    images,
+  }
+  await withStore(
+    'readwrite',
+    async (store) => {
+      await requestToPromise(store.put(record))
+    },
+    INSTANCE_STORE_NAME,
+  )
+}
+
+export async function deleteInstance(id: string): Promise<void> {
+  await withStore(
+    'readwrite',
+    async (store) => {
+      await requestToPromise(store.delete(id))
+    },
+    INSTANCE_STORE_NAME,
+  )
+}
+
+export async function loadInstances(): Promise<TemplateInstance[]> {
+  const records = await withStore(
+    'readonly',
+    async (store) => requestToPromise<StoredInstance[]>(store.getAll()),
+    INSTANCE_STORE_NAME,
+  )
+  return records.map((record) => {
+    const images: Record<string, Blob> = {}
+    for (const [key, 画像] of Object.entries(record.images ?? {})) {
+      images[key] = new Blob([画像.bytes], { type: 画像.type })
+    }
+    return { id: record.id, templateId: record.templateId, data: record.data, images }
+  })
+}
+
+export async function clearInstances(): Promise<void> {
+  await withStore(
+    'readwrite',
+    async (store) => {
+      await requestToPromise(store.clear())
+    },
+    INSTANCE_STORE_NAME,
+  )
 }
 
 export interface AutoSaver {

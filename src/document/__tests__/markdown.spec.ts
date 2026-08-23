@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest'
 import { documentSchema } from '../schema'
 import { docToMd, markdownSlice, mdToDoc } from '../markdown'
 import { 見出しの題名, 見出しレベル } from '../heading'
-import { PART_REF_NODE } from '../partRefExtension'
+import { PART_REF_INLINE_NODE, PART_REF_NODE } from '../partRefExtension'
 
 const みほんのmd = [
   '# あかしょう',
@@ -178,5 +178,29 @@ describe('P1-1 改訂: 記号は本文にあり、md では二重にならない
       documentSchema.node('heading', { level: 2 }, documentSchema.text('きごうなし')),
     ])
     expect(docToMd(doc)).toContain('## きごうなし')
+  })
+})
+
+describe('inline 版の参照も md で黙って消えない', () => {
+  /**
+   * ⚠ シリアライザに inline 版のエントリが無いと `docToMd` は例外を投げる。
+   *   例外なら気づけるが、**空文字を書くように実装すると「往復したら参照が消えていた」**
+   *   という、往復テストが緑のまま起きる事故になる（block 版で先に決めた線と同じ）。
+   */
+  it('文の途中に置いた参照が md に痕跡として残る（展開は P3 の責務）', () => {
+    const doc = documentSchema.node('doc', null, [
+      documentSchema.node('paragraph', null, [
+        documentSchema.text('まえ'),
+        documentSchema.node(PART_REF_INLINE_NODE, { instanceId: 'i1', partId: '画像' }),
+        documentSchema.text('あと'),
+      ]),
+    ])
+    const md = docToMd(doc)
+    expect(md).toContain('partRef')
+    expect(md).toContain('i1')
+    expect(md).toContain('まえ')
+    expect(md).toContain('あと')
+    // ⚠ 記号がエスケープされて `\<!--` になっていないこと
+    expect(md).not.toContain('\\<')
   })
 })

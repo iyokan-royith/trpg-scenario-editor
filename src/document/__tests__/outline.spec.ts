@@ -8,7 +8,7 @@ import { Editor } from '@tiptap/vue-3'
 import { documentExtensions } from '../schema'
 import { 見出し記号, 記号の長さ } from '../heading'
 import { outline, flattenOutline } from '../outline'
-import { PART_REF_NODE } from '../partRefExtension'
+import { PART_REF_INLINE_NODE, PART_REF_NODE } from '../partRefExtension'
 import {
   derivePartsOf,
   type Part,
@@ -19,7 +19,9 @@ import {
 const 定義: TemplateDefinition = {
   id: 'ぶんぼうぐ',
   name: 'ぶんぼうぐテンプレ',
-  parts: [
+  version: '0.1.0',
+  fields: [],
+  outputs: [
     { key: 'まえおき', kind: '固定', label: 'まえおき', form: '独立章' },
     { key: 'ひきだし', kind: '配列ごと', source: 'ひきだし', label: 'ひきだし', form: '独立章' },
     { key: 'ずかい', kind: '固定', label: 'ずかい', form: '図' },
@@ -29,6 +31,7 @@ const 定義: TemplateDefinition = {
 const インスタンス: TemplateInstance = {
   id: 'i1',
   templateId: 'ぶんぼうぐ',
+  images: {},
   data: {
     まえおき: 'まえおきの本文',
     ずかい: 'ずの本文',
@@ -213,5 +216,48 @@ describe('P1-2 改訂: ツリーには記号を出さない（記号を剥がす
 
   it('本文側には記号が残っている（剥がしたのはツリーだけ）', () => {
     expect(editor.state.doc.child(0).textContent).toBe('# だいいちしょう')
+  })
+})
+
+/**
+ * P2: ツリーの走査は inline 版の参照も見る（DESIGN 1-6-3 / §2 の「inline 版を足す」）。
+ *
+ * ⚠ inline 版は**段落の中**に居るので、doc の直下だけを見る走査では 1 個も見つからない。
+ *   気づけない壊れ方（独立章のパートを文中に置いた場合だけツリーから消える）なので、
+ *   block 版と同じ結果になることを直接当てる。
+ */
+describe('P2: 走査は inline 版の参照も対象にする', () => {
+  function ツリー(参照ノード: object) {
+    const ed = new Editor({
+      extensions: documentExtensions,
+      content: { type: 'doc', content: [見出し(1, 'しょう'), 参照ノード] },
+    })
+    const flat = flattenOutline(outline(ed.state.doc, parts))
+    ed.destroy()
+    return flat
+  }
+
+  it('独立章のパートを段落の中に置いても、ブロックで置いたのと同じ項目が出る', () => {
+    const block = ツリー(参照('まえおき'))
+    const inline = ツリー({
+      type: 'paragraph',
+      content: [{ type: PART_REF_INLINE_NODE, attrs: { instanceId: 'i1', partId: 'まえおき' } }],
+    })
+
+    expect(block.map((i) => [i.kind, i.title, i.level])).toEqual([
+      ['見出し', 'しょう', 1],
+      ['パート参照', 'まえおき', 2],
+    ])
+    expect(inline.map((i) => [i.kind, i.title, i.level])).toEqual(
+      block.map((i) => [i.kind, i.title, i.level]),
+    )
+  })
+
+  it('本文中のパート（画像など）はツリーに出ない（章ではないため・1-7-3）', () => {
+    const 図の参照 = {
+      type: 'paragraph',
+      content: [{ type: PART_REF_INLINE_NODE, attrs: { instanceId: 'i1', partId: 'ずかい' } }],
+    }
+    expect(ツリー(図の参照).map((i) => i.kind)).toEqual(['見出し'])
   })
 })
