@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { EditorContent, type Editor } from '@tiptap/vue-3'
 import { createDocumentEditor } from './document/editor'
 import { outline } from './document/outline'
-import { moveSection, setSectionLevel } from './document/sections'
+import { dropTargetPos, moveSection, setSectionLevel } from './document/sections'
 import { docToMd, mdToDoc } from './document/markdown'
 import OutlinePane from './ui/OutlinePane.vue'
 import { usePartStore } from './p0/partStore'
@@ -50,12 +50,13 @@ onMounted(async () => {
       type: 'doc',
       content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ここに書きはじめる' }] }],
     },
+    // ⚠ ツリーを作り直す経路はここ 1 本だけにしてある。
+    //   以前は onSelectionUpdate でも版を進めていたが、
+    //   **outline(doc, parts) は選択に依存しない**ので、あれは 2 本目の経路でしかなかった。
+    //   経路が 2 本あると片方が死んでも検査が鳴らない（陽性対照で実測）ので消した。
     onUpdate: () => {
       版.value += 1
       saver.schedule()
-    },
-    onSelectionUpdate: () => {
-      版.value += 1
     },
   })
 })
@@ -78,10 +79,16 @@ onBeforeUnmount(() => {
  */
 defineExpose({ editor })
 
-function 移動(payload: { from: number; to: number }) {
+function 移動(payload: { 掴んだ: number; 落とした先: number }) {
   const ed = editor.value
   if (!ed) return
-  const tr = moveSection(ed.state, payload.from, payload.to)
+  // 「相手の場所を取る」の意味を doc の挿入位置へ翻訳する（sections.ts の責務）。
+  const dest = dropTargetPos(ed.state.doc, payload.掴んだ, payload.落とした先)
+  if (dest === null) {
+    しらせ.value = 'そこへは移せません'
+    return
+  }
+  const tr = moveSection(ed.state, payload.掴んだ, dest)
   if (!tr) {
     しらせ.value = 'そこへは移せません'
     return

@@ -118,6 +118,53 @@ describe('P1-契約: outline は doc だけでは作れない（parts を受け�
     expect(JSON.stringify(editor.getJSON())).not.toContain('けしごむ')
   })
 
+  it('⭐ 同じ見出しの下に連続配置した独立章パートは、同じ深さの兄弟になる', () => {
+    // DESIGN 1-6-5 のカノニカルケース（配列 1 件ごとに独立章を生む宣言）はこの形。
+    // ⚠ 深さは「どこに置いたか」で決まる（DESIGN 1-6-3）。
+    //   「何番目に置いたか」で決まってはいけない（＝階段になってはいけない）。
+    const 連続 = new Editor({
+      extensions: documentExtensions,
+      content: {
+        type: 'doc',
+        content: [見出し(1, 'しょう'), 参照('まえおき'), 参照('ひきだし:h1'), 参照('ひきだし:h2')],
+      },
+    })
+    const tree = outline(連続.state.doc, parts)
+    連続.destroy()
+
+    expect(tree).toHaveLength(1)
+    const 章 = tree[0]!
+    // ⭐ root の children 数で照合する（階段になっていると 1 個に潰れる）
+    expect(章.children).toHaveLength(3)
+    expect(章.children.map((i) => i.title)).toEqual([
+      'まえおき',
+      'ひきだし けしごむ',
+      'ひきだし ものさし',
+    ])
+    expect(章.children.map((i) => i.level)).toEqual([2, 2, 2])
+    // 互いに入れ子になっていない
+    expect(章.children.every((i) => i.children.length === 0)).toBe(true)
+  })
+
+  it('⭐ 見出しを挟むと、パート参照の深さはその見出しに従う（位置で決まる）', () => {
+    const 混在 = new Editor({
+      extensions: documentExtensions,
+      content: {
+        type: 'doc',
+        content: [見出し(1, 'しょう'), 参照('ひきだし:h1'), 見出し(2, 'せつ'), 参照('ひきだし:h2')],
+      },
+    })
+    const flat = flattenOutline(outline(混在.state.doc, parts))
+    混在.destroy()
+
+    expect(flat.map((i) => [i.title, i.level])).toEqual([
+      ['しょう', 1],
+      ['ひきだし けしごむ', 2],
+      ['せつ', 2],
+      ['ひきだし ものさし', 3],
+    ])
+  })
+
   it('データ側から消えたパートはツリーに出ない（dangling の判定は analyzePlacement の責務）', () => {
     const 減った = parts.filter((p) => p.partId !== 'ひきだし:h1')
     const titles = flattenOutline(outline(editor.state.doc, 減った)).map((i) => i.title)

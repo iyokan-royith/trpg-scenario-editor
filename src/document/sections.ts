@@ -72,6 +72,29 @@ export function sectionRangeAt(doc: PMNode, pos: number): SectionRange | null {
 }
 
 /**
+ * 「掴んだ節を、落とした先の節の**場所へ**動かす」を doc 上の挿入位置に翻訳する。
+ *
+ * ⭐ リストの並べ替えで期待される意味は「**相手の位置を取る**」であって
+ *   「相手の前に挿す」ではない。前に挿す意味に固定すると、
+ *   **すぐ下の兄弟へ落としたときに「動かない位置」を指してしまい、1 つ下へ動かせなくなる**
+ *   （＝リスト UI でいちばん自然なジェスチャが死ぬ）。
+ *
+ * - 下へ動かすとき（掴んだ方が上）→ 相手の節の**うしろ**
+ * - 上へ動かすとき（掴んだ方が下）→ 相手の節の**まえ**
+ *
+ * 落とせないときは null。
+ */
+export function dropTargetPos(doc: PMNode, sourcePos: number, targetPos: number): number | null {
+  if (sourcePos === targetPos) return null
+  const source = sectionRangeAt(doc, sourcePos)
+  const target = sectionRangeAt(doc, targetPos)
+  if (!source || !target) return null
+  // 自分の配下へは落とせない（落とせると節が消える）
+  if (targetPos > source.from && targetPos < source.to) return null
+  return sourcePos < targetPos ? target.to : target.from
+}
+
+/**
  * 節を `destPos`（doc 直下の境界）へ移動する Transaction を組む。
  * 移動できない場合は null（＝呼び出し側は何もしない）。
  *
