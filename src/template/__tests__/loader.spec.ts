@@ -170,6 +170,38 @@ describe('日本語キーの正規化（NFC）', () => {
     expect(derivePartsOf(instance, def)[0]!.body).toEqual([{ kind: 'text', text: 'ほんぶん' }])
   })
 
+  /**
+   * 台帳 A39: `KEY_VALUED_PROPERTIES` は `key` と `source` の 2 つを持つが、
+   * `outputs[].key` は上のテストで既に押さえている一方、`kind: 'perItem'` が使う
+   * `outputs[].source` は 1 件も検査されていなかった（`new Set(['key'])` に落としても緑）。
+   */
+  it('NFD で書かれた perItem の source が、NFC のキーで引けるようになる（outputs[].source）', () => {
+    const text = JSON.stringify({
+      id: 'ため.し',
+      name: 'ためし',
+      version: '0.1.0',
+      fields: [],
+      outputs: [
+        { kind: 'perItem', key: 'item', source: `${NFD}ぞう`, label: 'こうもく', form: 'section' },
+      ],
+    })
+    expect(text).toContain(NFD)
+
+    const def = readTemplateDefinition(text, 'ためし.json')
+    expect(def.outputs[0]).toMatchObject({ source: `${NFC}ぞう` })
+
+    // ⭐ 本題: NFC で書かれたデータ（配列）を、定義の source で引けること
+    const instance: TemplateInstance = {
+      id: 'そざい1',
+      templateId: def.id,
+      data: { [`${NFC}ぞう`]: [{ id: 'a1', name: 'いちばん', body: 'ほんぶん' }] },
+      images: {},
+    }
+    const parts = derivePartsOf(instance, def)
+    expect(parts).toHaveLength(1)
+    expect(parts[0]!.body).toEqual([{ kind: 'text', text: 'ほんぶん' }])
+  })
+
   it('オブジェクトのキー自体も NFC へ揃う（入れ子も）', () => {
     const normalized = normalizeKeysToNfc({ [NFD]: { [`${NFD}の中`]: 1 } }) as Record<
       string,
