@@ -18,6 +18,36 @@ export interface OutlineItem {
 const MAX_LEVEL = 6
 
 /**
+ * ⭐ 「囲っている見出しの 1 つ下」— **深さの導出規則の単一の真実**（DESIGN 1-6-3）。
+ * ⚠ ここと `derivedDepthAt()` の2箇所で別々に書かない（片方だけ直すと、
+ *   **画面の深さと、正規化の判定が食い違う**＝明示のつもりが導出として捨てられる）。
+ */
+function depthUnder(enclosingLevel: number | null): number {
+  return Math.min((enclosingLevel ?? 0) + 1, MAX_LEVEL)
+}
+
+/**
+ * ⭐⭐ その位置に置かれた参照が、**明示指定が無ければ**どの深さになるか（§1-3-3e-2 の正規化）。
+ *
+ * ⚠⚠ **これは「今どう見えているか」ではなく「明示を外したらどう見えるか」**である。
+ *   `setPartRefDepth()` が「導出と同じ値なら `null` を書く」判定に使う——
+ *   **導出と同じ数の"明示"を残すと、画面上は同じなのに囲む見出しを変えたときだけ
+ *   片方が追随しない**、という**見えない状態**が生まれる（台帳 A71）。
+ *
+ * ⚠ 囲っている見出し＝**その位置より前にある最後の見出し**。
+ *   `outline()` の祖先スタックは見出しを処理するたびに自分が先頭になるので、同じ意味になる。
+ */
+export function derivedDepthAt(doc: PMNode, pos: number): number {
+  let enclosing: number | null = null
+  doc.forEach((node, offset) => {
+    if (offset >= pos) return
+    const level = headingLevel(node.textContent)
+    if (level !== null) enclosing = level
+  })
+  return depthUnder(enclosing)
+}
+
+/**
  * ドキュメントから見出しツリーを導出する。
  *
  * ⚠⚠ **`parts` を受け取るのが契約**（DESIGN 1-6-4）。
@@ -80,7 +110,7 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
     //   「どこに置いたか」ではなく「何番目に置いたか」で深さが決まってしまう。
     //   → **パート参照は配下を持たない**（左ペインの上げ下げで配下を気にしなくてよい根拠）。
     const enclosing = headingAncestors[headingAncestors.length - 1]
-    const derived = Math.min((enclosing?.level ?? 0) + 1, MAX_LEVEL)
+    const derived = depthUnder(enclosing?.level ?? null)
     // ⭐⭐ **明示された深さがあればそれを使う**（§1-3-3e-2・左ペインの上げ下げ）。
     //   ⚠ 既定は `null`＝導出。**既存の doc は属性を持たない**ので、ここが後方互換の受け口。
     const explicit = node.attrs.depth

@@ -434,7 +434,7 @@ describe('左ツリーで素材の章の階層を変えられる（§1-3-3e-2）
     expect(editorOf().state.doc.nodeAt(refs[0]!.pos)!.attrs.depth).toBe(before + 1)
   })
 
-  it('⭐ 上げると戻る（往復できる＝押しても何も起きない、ではない）', async () => {
+  it('⭐⭐ 上げると戻り、そのとき明示（属性）が消えて導出へ戻る（台帳 A71）', async () => {
     await mountApp()
     await createDungeonWithTwoRooms('ためしの迷宮')
     await insertFromRow(1)
@@ -446,5 +446,9 @@ describe('左ツリーで素材の章の階層を変えられる（§1-3-3e-2）
     await nextTick()
 
     expect(Number(partRow().attributes('data-level'))).toBe(before)
+    // ⚠⚠ **画面だけでは足りない**——明示のまま同じ数に戻っても、見た目は区別が付かない。
+    //   属性まで見ないと「見えない状態が残った」を検出できない（A71 の症状そのもの）。
+    const refs = collectPlacedRefs(editorOf().state.doc)
+    expect(editorOf().state.doc.nodeAt(refs[0]!.pos)!.attrs.depth).toBeNull()
   })
 })

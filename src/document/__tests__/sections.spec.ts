@@ -24,7 +24,7 @@ import {
   canChangeLevel,
   topLevelBoundaries,
 } from '../sections'
-import { flattenOutline, outline } from '../outline'
+import { derivedDepthAt, flattenOutline, outline } from '../outline'
 import { PART_REF_NODE } from '../partRefExtension'
 import { headingTitle, headingMark } from '../heading'
 
@@ -254,5 +254,105 @@ describe('パート参照の階層（§1-3-3e-2）', () => {
       },
     })
     expect(canChangeLevel(ed.state.doc, 0, 6)).toEqual({ ok: true })
+  })
+})
+
+/**
+ * ⭐⭐ 明示的な深さの**正規化**（台帳 A71・§1-3-3e-2 の補正）。
+ *
+ * ⚠⚠ **画面では区別が付かない**——導出の深さ 2 と明示の深さ 2 はまったく同じに見える。
+ *   だからここは**属性を直接見る**。見た目で確かめると、
+ *   **「明示のまま戻った」も「導出へ戻った」も同じ緑になる**（＝検査になっていない）。
+ */
+describe('明示的な深さの正規化（A71）', () => {
+  /** 見出し 1 つ（level 1）の下に参照を置いた doc。⚠ 導出の深さは 2。 */
+  function docUnderHeading() {
+    return new Editor({
+      extensions: documentExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          heading(1, 'しょう'),
+          { type: PART_REF_NODE, attrs: { instanceId: 'i1', partId: 'p1' } },
+        ],
+      },
+    })
+  }
+
+  function refPos(ed: Editor): number {
+    return topLevelBoundaries(ed.state.doc)[1]!
+  }
+  function depthOf(ed: Editor): unknown {
+    return ed.state.doc.nodeAt(refPos(ed))!.attrs.depth
+  }
+
+  it('⭐ 導出と同じ深さへ戻すと、明示（属性）が消えて `null` になる', () => {
+    const ed = docUnderHeading()
+    expect(depthOf(ed)).toBeNull() // 最初は導出
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 3)!) // 下げる → 明示
+    expect(depthOf(ed)).toBe(3)
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 2)!) // 上げて元の深さへ
+    // ⚠⚠ ここが `2` のままだと、**画面は同じなのに導出へ戻っていない**（見えない状態が残る）
+    expect(depthOf(ed)).toBeNull()
+  })
+
+  it('⭐⭐ 戻したあとに囲む見出しを変えると追随する（＝本当に導出へ戻っている）', () => {
+    const ed = docUnderHeading()
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 3)!)
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 2)!)
+
+    // 囲む見出しを level 1 → 2 にすると、導出の深さは 3 になるはず
+    ed.view.dispatch(setSectionLevel(ed.state, 0, 2)!)
+    const ref = flattenOutline(outline(ed.state.doc, [])).find((i) => i.kind === 'partRef')
+    // ⚠ パートが無いので outline には出ない。深さの導出だけを直接見る。
+    expect(ref).toBeUndefined()
+    expect(derivedDepthAt(ed.state.doc, refPos(ed))).toBe(3)
+    expect(depthOf(ed)).toBeNull()
+  })
+
+  it('⭐ 導出と違う深さは残る（明示を捨てているわけではない）', () => {
+    const ed = docUnderHeading()
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 5)!)
+    expect(depthOf(ed)).toBe(5)
+    // もう一度別の値にしても、導出（2）でなければ残る
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 4)!)
+    expect(depthOf(ed)).toBe(4)
+  })
+
+  /**
+   * ⚠⚠ **参照の「あと」に見出しがある形**を必ず1本置く（変異で実測した穴）。
+   *   `derivedDepthAt()` が位置を見ずに**doc 全体の最後の見出し**を拾う実装でも、
+   *   参照が末尾にある doc では**まったく同じ答えになる**——
+   *   ⚠ 上の3本は全部その形だったので、**位置を無視する変異が素通りしていた**。
+   *   ⭐ `outline()` 側は祖先スタックなので構造的に位置を見るが、
+   *   **正規化の判定は別の実装**（「囲む見出しを探す」を2箇所に分けてしまった）。
+   */
+  it('⭐⭐ 参照のあとに見出しがあっても、囲むのは「前の見出し」', () => {
+    const ed = new Editor({
+      extensions: documentExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          heading(1, 'まえのしょう'),
+          { type: PART_REF_NODE, attrs: { instanceId: 'i1', partId: 'p1' } },
+          heading(3, 'あとのせつ'),
+        ],
+      },
+    })
+    const pos = topLevelBoundaries(ed.state.doc)[1]!
+    // ⚠ 後ろの見出し（level 3）を拾うと 4 になる。前の見出し（level 1）の 1 つ下＝2 が正しい。
+    expect(derivedDepthAt(ed.state.doc, pos)).toBe(2)
+
+    // 正規化もその値で行われる（2 へ戻したら明示が消える）
+    ed.view.dispatch(setPartRefDepth(ed.state, pos, 5)!)
+    ed.view.dispatch(setPartRefDepth(ed.state, pos, 2)!)
+    expect(ed.state.doc.nodeAt(pos)!.attrs.depth).toBeNull()
+  })
+
+  it('最初から導出と同じ深さを指定しても、明示にはならない', () => {
+    const ed = docUnderHeading()
+    // ⚠ 「1 度でも押したら永久に明示」を作らない（A71 の症状そのもの）
+    expect(setPartRefDepth(ed.state, refPos(ed), 2)).toBeNull()
+    expect(depthOf(ed)).toBeNull()
   })
 })

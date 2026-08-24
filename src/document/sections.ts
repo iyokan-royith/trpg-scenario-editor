@@ -2,6 +2,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import { PART_REF_NODE } from './partRefExtension'
 import { MAX_LEVEL, MIN_LEVEL, headingMark, headingLevel, markLength } from './heading'
+import { derivedDepthAt } from './outline'
 
 /**
  * 左ペインからの並べ替え・階層変更。
@@ -230,7 +231,19 @@ export function setPartRefDepth(
   if (!canChangeLevel(doc, sourcePos, newLevel).ok) return null
   const node = doc.nodeAt(sourcePos)
   if (!node) return null
-  const tr = state.tr.setNodeMarkup(sourcePos, undefined, { ...node.attrs, depth: newLevel })
+  // ⭐⭐ **正規化する**（台帳 A71）: 導出と同じ深さなら**明示を持たせない**。
+  //   ⚠⚠ 導出と同じ数の「明示」を残すと、**画面上はまったく同じなのに、
+  //   あとで囲む見出しを変えたときだけ片方が追随しない**——
+  //   利用者から見て**理由の見えない差**になる（＝画面に無いものがデータに残る型）。
+  //   ⭐ こうすると「明示か導出か」が**値から一意に決まる**（導出と同じ数の明示が存在しない）。
+  //   ⚠ 導出と**違う**深さは今までどおり残る＝**明示を捨てているわけではない**。
+  const depth = newLevel === derivedDepthAt(doc, sourcePos) ? null : newLevel
+  // ⚠⚠ **`docChanged` では「変わっていない」を判定できない**——`setNodeMarkup` は
+  //   同じ属性でもノードを置き換えるので、常に真になる（実測）。
+  //   → **属性そのものを比べる。** 比べないと、押しても何も変わらない操作が
+  //   履歴に積まれ、自動保存も走る（＝画面には何も起きないのに doc が「変わった」ことになる）。
+  if (node.attrs.depth === depth) return null
+  const tr = state.tr.setNodeMarkup(sourcePos, undefined, { ...node.attrs, depth })
   return tr.docChanged ? tr : null
 }
 
