@@ -208,3 +208,41 @@ describe('「差し替え」は画像を持つ素材にしか出ない（S7-3）
     expect(Object.keys(instance.images)).toEqual([])
   })
 })
+
+/**
+ * ⭐ 本文に置いた素材が、**左ツリーで「章として扱う」と見て分かる**（§1-3-3e 要望A）。
+ *
+ * ⚠⚠ **`OutlinePane` の単体テストだけでは足りない**（`ui/__tests__/outlinePane.spec.ts`）。
+ *   あちらは `kind: 'partRef'` を**手で渡している**ので、
+ *   **実データの導出（`outline.ts`）からバッジまでの間**が抜けても緑のままになる。
+ *   ここは「素材を作る → 本文へ置く → 左ツリーに印が出る」を1本に繋ぐ。
+ *
+ * ⚠ この spec に置いたのは、**エディタの立ち上がりを待つ `mountApp()` と
+ *   「挿入が本文へ届いたことまで確かめる」`insertFromRow()`** がここに在るため
+ *   （待たない経路で書くと、届いていないのに緑になる・上の警告を参照）。
+ */
+describe('左ツリーで「章として扱う素材」が見分けられる（§1-3-3e 要望A）', () => {
+  it('⭐ 独立章のパートを置くと、左ツリーにその行が出て「素材の章」の印が付く', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    // 行 1 は部屋のパート（`form: 'section'`）＝ツリーに出るもの
+    await insertFromRow(1)
+
+    const partRows = wrapper!.findAll('.outline__item[data-kind="partRef"]')
+    expect(partRows).toHaveLength(1)
+    expect(partRows[0]!.classes()).toContain('outline__item--part')
+    expect(partRows[0]!.find('.outline__badge').text()).toBe('素材の章')
+  })
+
+  it('⭐ 図のパート（`form: "figure"`）を置いても左ツリーには出ない（ツリーは章だけ）', async () => {
+    // ⚠⚠ 本人が見た「ブロックなのか章なのか分からない」の**前提が違う**ことの述語。
+    //   ツリーに出るのは `section` だけなので、**出ているものは例外なく章として扱うもの**。
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    await insertFromRow(3) // 行 3 は図のパート
+
+    expect(wrapper!.findAll('.outline__item[data-kind="partRef"]')).toHaveLength(0)
+    // ⚠ 陽性対照: 置いた参照は本文には在る（＝「出ない」が挿入失敗ではない）
+    expect(collectPlacedRefs(editorOf().state.doc)).toHaveLength(1)
+  })
+})
