@@ -24,8 +24,10 @@ import {
   DIRECTIONS,
   EDGE_REF_AT_KEY,
   EDGE_REF_FACING_KEY,
+  COORDINATE_CHOICES,
   REF_KIND_KEY,
   discriminatorKeyOf,
+  formatCoordinate,
 } from '../domain'
 import { createArrayItem, createDraft, pruneEmpty, validateDraft } from '../form'
 
@@ -61,6 +63,21 @@ describe('同梱サンプル（読む側の実物）と、フォームの語彙�
       expect(Object.keys(coordinate).sort()).toEqual([COORDINATE_COLUMN_KEY, COORDINATE_ROW_KEY].sort())
       expect(typeof coordinate[COORDINATE_COLUMN_KEY]).toBe('number')
     }
+  })
+
+  /**
+   * ⭐⭐ 3×3 固定（§1-3-3d ①）の根拠は**実データ**である。
+   * ⚠ ここが赤いなら「9 択では入れられない座標が実物に在る」＝ 3×3 の前提が崩れている。
+   */
+  it('⭐ サンプルの座標は 9 つ（`A1`〜`C3`）の中に収まっている', () => {
+    const coordinates = collectCoordinateLike(sample.data)
+    expect(coordinates.length).toBeGreaterThan(5)
+    for (const coordinate of coordinates) {
+      // ⚠ 画面の 9 択（`COORDINATE_CHOICES`）と、保存形（`{row, col}`）の突き合わせ
+      expect(COORDINATE_CHOICES).toContain(formatCoordinate(coordinate))
+    }
+    // ⚠ 陽性対照: 実データが 9 つのうち複数を実際に使っている（1 つに偏っていない）
+    expect(new Set(coordinates.map(formatCoordinate)).size).toBeGreaterThan(3)
   })
 
   it('⭐ 辺参照は `at` + `direction`、方向の値は 8 方向の語彙に入っている', () => {

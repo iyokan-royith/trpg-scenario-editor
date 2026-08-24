@@ -23,7 +23,7 @@ import {
   pruneEmpty,
   validateDraft,
 } from '../form'
-import { DIRECTIONS, childFieldsOf, choicesOf, visibleFieldsOf } from '../domain'
+import { COORDINATE_CHOICES, DIRECTIONS, childFieldsOf, choicesOf, visibleFieldsOf } from '../domain'
 
 /** 基本型 7 種＋未対応型を 1 つ混ぜた定義（この切れ目の全域）。 */
 const BASIC_FIELDS: FieldDef[] = [
@@ -447,7 +447,7 @@ describe('ドメイン型の検証（validateDraft）', () => {
       validateDraft(
         DOMAIN_FIELDS,
         draftWith({
-          at: coordinate('Z', 26),
+          at: coordinate('C', 3),
           facing: '左上',
           from: { at: coordinate('A', 1), direction: '左' },
         }),
@@ -465,14 +465,23 @@ describe('ドメイン型の検証（validateDraft）', () => {
     }
   })
 
-  it('行が A〜Z の外・列が 1 未満なら知らせる', () => {
-    const outOfRow = validateDraft(DOMAIN_FIELDS, draftWith({ at: coordinate('あ', 1) }))
-    expect(outOfRow).toHaveLength(1)
-    expect(outOfRow[0]).toContain('A〜Z')
-
-    const zero = validateDraft(DOMAIN_FIELDS, draftWith({ at: coordinate('A', 0) }))
-    expect(zero).toHaveLength(1)
-    expect(zero[0]).toContain('1 以上')
+  /**
+   * ⭐ 3×3 の外（§1-3-3d ①）。
+   * ⚠⚠ **画面は 9 択なので、ここへ来るのは保存済みデータ・持ち込み定義から外れた値だけ**。
+   *   それでも黙って通さない——通すと、図に置けない座標がデータに残る。
+   */
+  it('⭐ 3×3 の外の座標は知らせる（行も列も）', () => {
+    for (const outside of [coordinate('あ', 1), coordinate('D', 1), coordinate('A', 0), coordinate('A', 4)]) {
+      const errors = validateDraft(DOMAIN_FIELDS, draftWith({ at: outside }))
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain('A1')
+      expect(errors[0]).toContain('C3')
+    }
+    // ⚠ 陽性対照: 9 つは全部通る（弾きすぎていない）
+    for (const inside of COORDINATE_CHOICES) {
+      const at = { row: inside.slice(0, 1), col: Number(inside.slice(1)) }
+      expect(validateDraft(DOMAIN_FIELDS, draftWith({ at }))).toEqual([])
+    }
   })
 
   it('⚠ 列の小数は「整数で」と 1 行だけ出る（合成の子と親で二重に言わない）', () => {
@@ -787,12 +796,12 @@ describe('判別子付き共用体の検証（validateDraft）', () => {
     const errors = validateDraft(
       C_FIELDS,
       draftOf({
-        trap: { name: 'シークレットドア', target: { kind: 'room', at: { row: 'A', col: 0 } } },
+        trap: { name: 'シークレットドア', target: { kind: 'room', at: { row: 'D', col: 1 } } },
       }),
     )
     expect(errors).toHaveLength(1)
     expect(errors[0]).toContain('罠')
     expect(errors[0]).toContain('対象')
-    expect(errors[0]).toContain('1 以上')
+    expect(errors[0]).toContain('C3')
   })
 })

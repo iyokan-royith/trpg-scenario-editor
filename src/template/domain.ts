@@ -13,10 +13,59 @@
  */
 import type { FieldDef, FieldType, VariantDef } from './model'
 
-/** 行（`A`〜`Z`）。⚠ 値が言語に依らないので、そのまま選択肢に使える（§1-8-1 の線を踏まない）。 */
-export const ROW_LETTERS: readonly string[] = Array.from({ length: 26 }, (_, i) =>
-  String.fromCharCode('A'.charCodeAt(0) + i),
+/**
+ * ⭐⭐ **マップは 3×3 固定**（2026-08-24 ロイスの実機フィードバック・§1-3-3d ①）。
+ *
+ * 本人の言葉:「**迷宮キングダムのマップはよっぽどの事が無いかぎり 3×3 で構成されています**」。
+ * ⚠ 同梱サンプルが使う座標も `A`〜`C` × `1`〜`3` ちょうど（実測）。
+ *
+ * ⚠⚠ **これは「尋ね方」の仕様であって、保存形は変わっていない**（`{row, col}`・§1-3-3b）。
+ *   26 文字の行（`ROW_LETTERS`）は**削除した**——3×3 固定の下では
+ *   「いつか使うかもしれない」以外の理由が無く、残すと**画面に出ない選択肢**が
+ *   検証だけを通ることになる（残す冗長には理由を書く・台帳 A58）。
+ */
+export const COORDINATE_ROWS: readonly string[] = ['A', 'B', 'C']
+export const COORDINATE_COLUMNS: readonly number[] = [1, 2, 3]
+
+/**
+ * 9 つの座標（`A1`〜`C3`）。⚠ **画面に出る文字列**であり、保存される値ではない。
+ * ⚠ 大文字にそろえる（本人は `a1` と小文字で書いたが、**保存形も既存データも大文字**・統括判断）。
+ */
+export const COORDINATE_CHOICES: readonly string[] = COORDINATE_ROWS.flatMap((row) =>
+  COORDINATE_COLUMNS.map((column) => `${row}${column}`),
 )
+
+/** `{row:'A', col:1}` → `'A1'`。⚠ 揃っていなければ「選んでいない」＝空文字。 */
+export function formatCoordinate(value: unknown): string {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return ''
+  const record = value as Record<string, unknown>
+  const row = record[COORDINATE_ROW_KEY]
+  const column = record[COORDINATE_COLUMN_KEY]
+  if (typeof row !== 'string' || typeof column !== 'number') return ''
+  return `${row}${column}`
+}
+
+/**
+ * `'A1'` → `{row:'A', col:1}`。⚠ 空（選んでいない）は**空の座標**へ戻す。
+ * ⚠⚠ **ここが保存形との唯一の接点**である。9 択は画面の都合で、
+ *   データは今までどおり行と列を別々に持つ（潰すと P4 で図が描けない）。
+ */
+export function parseCoordinate(text: string): Record<string, unknown> {
+  if (!COORDINATE_CHOICES.includes(text)) {
+    // ⚠ ここを `{}` にしても**観測できる違いは無い**（実測: 変異を当てても 1 本も赤くならない）。
+    //   3 述語はどちらも「空」と判定し、画面の表示も同じ。
+    //   → **それでも空の座標の形で返すのは、下書きの形を `createDraft()` と一致させるため**
+    //     （形が揺れると、後から「キーが在るか」で分岐する実装を書いた人が踏む）。
+    //   ⚠ これは検査で守られていない約束なので、変えるときはここを読むこと（台帳 A58）。
+    return { [COORDINATE_ROW_KEY]: '', [COORDINATE_COLUMN_KEY]: null }
+  }
+  return { [COORDINATE_ROW_KEY]: text.slice(0, 1), [COORDINATE_COLUMN_KEY]: Number(text.slice(1)) }
+}
+
+/** その値が 3×3 の中に在るか。⚠ 保存済みデータ・持ち込み定義から外れた値が来うる。 */
+export function isCoordinateInRange(value: unknown): boolean {
+  return COORDINATE_CHOICES.includes(formatCoordinate(value))
+}
 
 /**
  * 座標のキー。⚠⚠ **これは新しく決めた語ではない。既に在る契約に合わせている。**
@@ -75,8 +124,15 @@ export function isDirection(value: unknown): value is Direction {
  * `coordinate` の中身＝行（`A`〜`Z` の選択）と列（1 以上の整数）。
  * ⚠ **`enum` と `integer` そのもの**なので、入力欄・検証・刈り取りを新しく書かない。
  */
+/**
+ * ⚠⚠ **入力欄としてはもう使わない**（3×3 の 9 択 1 つになった・§1-3-3d ①）。
+ *   **それでもこの宣言を残しているのは、保存形（`{row, col}`）の検証・刈り取り・
+ *   打ちかけ判定が、いまもこの2フィールドの上に乗っているから**である
+ *   （`integer` の整数チェックもここが担っている）。
+ *   → **残す理由を書く**（台帳 A58）。⚠ 消すと3述語が座標を素通りする。
+ */
 export const COORDINATE_FIELDS: readonly FieldDef[] = [
-  { key: COORDINATE_ROW_KEY, type: 'enum', label: '行', choices: [...ROW_LETTERS] },
+  { key: COORDINATE_ROW_KEY, type: 'enum', label: '行', choices: [...COORDINATE_ROWS] },
   { key: COORDINATE_COLUMN_KEY, type: 'integer', label: '列' },
 ]
 

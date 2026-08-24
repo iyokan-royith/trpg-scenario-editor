@@ -265,8 +265,8 @@ describe('判別子付き共用体は、同梱定義の両方の枝が入力で�
     await first.find('.field--oneOf .field--enum select').setValue('坂道')
     const higher = first.find('.field--oneOf .field--coordinate')
     expect(higher.exists()).toBe(true)
-    await higher.find('.field--enum select').setValue('B')
-    await higher.find('.field--integer input').setValue('1')
+    // ⭐ 3×3 の 9 択ひとつ（§1-3-3d ①）。⚠ 保存されるのは今までどおり `{row, col}`
+    await higher.find('select').setValue('B1')
 
     // 2 件目: 幻の路 → 追加項目は出ない（判別子だけの枝）
     const second = items[1]!
@@ -309,5 +309,62 @@ describe('判別子付き共用体は、同梱定義の両方の枝が入力で�
     const savedRooms = saved[0]!.data.rooms as Record<string, unknown>[]
     // ⚠ 共有フィールドと判別子が両方残る（枝の中身は空なので書かれない）
     expect(savedRooms[0]!.encounter).toEqual({ shape: 'battlefield', kind: '敵対' })
+  })
+})
+
+/**
+ * ⭐ 実機フィードバックで変えた 2 件（§1-3-3d）を、**App の配線を通して**確かめる。
+ */
+describe('実機フィードバックの反映（§1-3-3d）', () => {
+  it('⭐⭐ 座標は 9 択ひとつで入り、保存形は `{row, col}` のまま', async () => {
+    const app = await mountApp()
+    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+
+    const entrances = app
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('入口'))!
+    await entrances.find('.field__add').trigger('click')
+    const at = entrances.find('.field--coordinate')
+    // 行と列を別々に尋ねる欄はもう無い（本人「予想通り辛い」）
+    expect(at.findAll('select')).toHaveLength(1)
+    await at.find('select').setValue('C2')
+
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    const saved = await loadInstances()
+    const rows = saved[0]!.data.entrances as Record<string, unknown>[]
+    // ⚠⚠ 保存形は §1-3-3b の契約のまま（`"C2"` という文字列にしない＝P4 で図が描ける）
+    expect(rows[0]!.at).toEqual({ row: 'C', col: 2 })
+  })
+
+  it('⭐ トラップ名は自由入力（ルールブックに無い名前も入る）', async () => {
+    const app = await mountApp()
+    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+
+    const rooms = app
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('部屋'))!
+    await rooms.find('.field__add').trigger('click')
+    const traps = rooms
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('トラップ'))!
+    await traps.find('.field__add').trigger('click')
+
+    // ⚠ 選択肢ではなく文字の欄が出ている。
+    //   ⚠⚠ **同じ要素の中に enum が無いことでは判定できない**——トラップの `target`（参照）が
+    //   種類の選択肢を持っているため。**名前の欄そのもの**を見る（1 つ目の子）。
+    const nameField = traps.findAll('.field__item > .field')[0]!
+    expect(nameField.classes()).toContain('field--string')
+    expect(nameField.classes()).not.toContain('field--enum')
+    await nameField.find('input').setValue('サプリメントの落とし穴')
+
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    const saved = await loadInstances()
+    const savedRooms = saved[0]!.data.rooms as Record<string, unknown>[]
+    const savedTraps = savedRooms[0]!.traps as Record<string, unknown>[]
+    expect(savedTraps[0]!.name).toBe('サプリメントの落とし穴')
   })
 })

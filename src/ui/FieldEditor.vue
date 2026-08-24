@@ -9,7 +9,15 @@ import {
   isSupportedFieldType,
   labelOf,
 } from '../template/form'
-import { childFieldsOf, choicesOf, isVariantFieldType, visibleFieldsOf } from '../template/domain'
+import {
+  COORDINATE_CHOICES,
+  childFieldsOf,
+  choicesOf,
+  formatCoordinate,
+  isVariantFieldType,
+  parseCoordinate,
+  visibleFieldsOf,
+} from '../template/domain'
 
 /**
  * 入力欄 1 つ（DESIGN-v0.md §4 の P2 完了条件 #2・#3）。
@@ -173,6 +181,23 @@ function hasImage(): boolean {
   return props.modelValue instanceof Blob
 }
 
+/**
+ * ⭐⭐ 座標は **3×3 の 9 択 1 つ**で尋ねる（§1-3-3d ①・ロイスの実機フィードバック
+ * 「行と列を別々に尋ねられるのは**予想通り辛い**」）。
+ *
+ * ⚠⚠ **保存形は変えていない**——画面は `A1`、データは `{row:'A', col:1}`（§1-3-3b）。
+ *   ⚠ ここを潰して文字列で保存すると、P4 で図が描けなくなる。
+ */
+const coordinateChoices = () => COORDINATE_CHOICES
+
+function coordinateText(): string {
+  return formatCoordinate(props.modelValue)
+}
+
+function onCoordinate(event: Event) {
+  emit('update:modelValue', parseCoordinate((event.target as HTMLSelectElement).value))
+}
+
 /** 選んだ画像の名前。⚠ 名前を持たない Blob もあるので、そのときは「選んだ」ことだけ言う。 */
 function imageName(): string {
   const value = props.modelValue
@@ -263,9 +288,21 @@ function imageName(): string {
       />
     </fieldset>
 
-    <!-- ⭐ 座標・辺参照は**合成**（`domain.ts`）。入れ子と同じ経路で描く＝新しい概念を足さない -->
+    <!-- ⭐⭐ 座標は 3×3 の 9 択ひとつ（§1-3-3d ①）。⚠ 保存されるのは今までどおり行と列 -->
+    <label v-else-if="field.type === 'coordinate'" class="field__row">
+      <span class="field__label">{{ labelOf(field) }}</span>
+      <select :value="coordinateText()" @change="onCoordinate">
+        <option value="">（選んでいません）</option>
+        <option v-for="choice in coordinateChoices()" :key="choice" :value="choice">
+          {{ choice }}
+        </option>
+      </select>
+    </label>
+
+    <!-- ⭐ 辺参照は**合成**（`domain.ts`）。入れ子と同じ経路で描く＝新しい概念を足さない。
+         ⚠ 中の座標は上の 9 択がそのまま出る（合成なので自動で追随する） -->
     <fieldset
-      v-else-if="field.type === 'object' || field.type === 'coordinate' || field.type === 'edgeRef'"
+      v-else-if="field.type === 'object' || field.type === 'edgeRef'"
       class="field__group"
     >
       <legend>{{ labelOf(field) }}</legend>

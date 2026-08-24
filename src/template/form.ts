@@ -11,7 +11,8 @@ import {
   COORDINATE_ROW_KEY,
   EDGE_REF_FACING_KEY,
   EDGE_REF_AT_KEY,
-  ROW_LETTERS,
+  COORDINATE_CHOICES,
+  isCoordinateInRange,
   allVariantFieldsOf,
   childFieldsOf,
   discriminatorKeyOf,
@@ -324,15 +325,16 @@ export function validateDraft(
           break
         }
         if (state === 'blank') break
-        const record = asRecord(value)
-        const row = record[COORDINATE_ROW_KEY]
-        const column = record[COORDINATE_COLUMN_KEY]
-        if (typeof row !== 'string' || !ROW_LETTERS.includes(row)) {
-          errors.push(`${where(label)}の行は A〜Z で入れてください`)
-        }
-        // ⚠ 整数かどうかは子の検査が言うので、ここでは重ねて言わない（同じ誤りを 2 行出さない）。
-        if (typeof column === 'number' && Number.isInteger(column) && column < 1) {
-          errors.push(`${where(label)}の列は 1 以上で入れてください`)
+        // ⭐ 3×3 固定（§1-3-3d ①）。⚠ 画面は 9 択なので、ここへ来るのは
+        //   **保存済みデータ・持ち込み定義から外れた値**（それでも黙って通さない）。
+        // ⚠ 整数かどうかは子の検査が言うので、非整数のときはここで重ねて言わない
+        //   （同じ誤りを 2 行出さない）。
+        const column = asRecord(value)[COORDINATE_COLUMN_KEY]
+        const nonInteger = typeof column === 'number' && !Number.isInteger(column)
+        if (!nonInteger && !isCoordinateInRange(value)) {
+          errors.push(
+            `${where(label)}は ${COORDINATE_CHOICES[0]}〜${COORDINATE_CHOICES[COORDINATE_CHOICES.length - 1]} の中から選んでください`,
+          )
         }
         break
       }

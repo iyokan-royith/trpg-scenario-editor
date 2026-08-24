@@ -254,9 +254,8 @@ describe('未対応の型があってもフォームが開ける（完了条件 
       .find((f) => f.find('legend').text().startsWith('入口'))!
     await entrances.find('.field__add').trigger('click')
 
-    // 位置（座標）＝行と列、向き（方向）
-    await entrances.find('.field--coordinate .field--enum select').setValue('B')
-    await entrances.find('.field--coordinate .field--integer input').setValue('3')
+    // 位置（座標）＝ 3×3 の 9 択ひとつ、向き（方向）
+    await entrances.find('.field--coordinate select').setValue('B3')
     await entrances.find('.field--direction select').setValue('右下')
 
     const data = await save(wrapper)
@@ -299,19 +298,36 @@ async function saveImages(
 }
 
 describe('ドメイン型 A 群が入力できる（§1-3-3）', () => {
-  it('⭐ 座標は行（A〜Z の選択）と列（数）の 2 つを尋ねる', async () => {
+  it('⭐⭐ 座標は 3×3 の 9 択ひとつ（§1-3-3d ①）。⚠ 保存されるのは今までどおり行と列', async () => {
     const wrapper = mountForm(DOMAIN_DEF)
     const at = wrapper.find('.field--coordinate')
     expect(at.exists()).toBe(true)
-    const rowOptions = at.findAll('.field--enum option').map((o) => o.text())
-    // 「（選んでいません）」＋ A〜Z
-    expect(rowOptions).toHaveLength(27)
-    expect(rowOptions).toContain('A')
-    expect(rowOptions).toContain('Z')
+    const options = at.findAll('option').map((o) => o.text())
+    // 「（選んでいません）」＋ 9 つ
+    expect(options).toHaveLength(10)
+    expect(options).toEqual(
+      expect.arrayContaining(['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3']),
+    )
+    // ⚠ 行と列を別々に尋ねる欄は**もう無い**（本人「予想通り辛い」）
+    expect(at.findAll('select')).toHaveLength(1)
+    expect(at.find('input').exists()).toBe(false)
 
-    await at.find('.field--enum select').setValue('C')
-    await at.find('.field--integer input').setValue('4')
-    expect((await save(wrapper)).at).toEqual({ row: 'C', col: 4 })
+    await at.find('select').setValue('C3')
+    // ⚠⚠ 画面は `C3`、保存は `{row, col}`（§1-3-3b の契約を崩していない）
+    expect((await save(wrapper)).at).toEqual({ row: 'C', col: 3 })
+  })
+
+  it('⭐ 9 択なので、半分だけの座標を画面から作れない（行だけ・列だけが生まれない）', async () => {
+    // ⚠ 純ロジック側の「半分だけ」の検査は**保存済みデータのために**残っている（form.spec）。
+    //   ここで見るのは「画面からはその状態を作れない」こと。
+    const wrapper = mountForm(DOMAIN_DEF)
+    await wrapper.find('.field--coordinate select').setValue('A2')
+    const at = (await save(wrapper)).at as Record<string, unknown>
+    expect(Object.keys(at).sort()).toEqual(['col', 'row'])
+
+    // 「（選んでいません）」へ戻すと、片方だけ残ったりしない
+    await wrapper.find('.field--coordinate select').setValue('')
+    expect('at' in (await save(wrapper))).toBe(false)
   })
 
   it('⭐ 方向は 8 つ（斜めを含む）。値は日本語＝読む側（サンプル）と同じ語彙', async () => {
@@ -337,25 +353,14 @@ describe('ドメイン型 A 群が入力できる（§1-3-3）', () => {
     expect(from.find('.field--coordinate').exists()).toBe(true)
     expect(from.find('.field--direction').exists()).toBe(true)
 
-    await from.find('.field--coordinate .field--enum select').setValue('A')
-    await from.find('.field--coordinate .field--integer input').setValue('1')
+    // ⚠⚠ 中の座標は 9 択がそのまま出る（合成なので自動で追随している）
+    expect(from.findAll('.field--coordinate option')).toHaveLength(10)
+    await from.find('.field--coordinate select').setValue('A1')
     await from.find('.field--direction select').setValue('下')
 
     expect((await save(wrapper)).from).toEqual({ at: { row: 'A', col: 1 }, direction: '下' })
   })
 
-  it('半分だけの座標は保存されず、理由が画面に出る（打った値は消えない）', async () => {
-    const wrapper = mountForm(DOMAIN_DEF)
-    await wrapper.find('.field--coordinate .field--enum select').setValue('C')
-    await wrapper.find('form').trigger('submit')
-
-    expect(wrapper.emitted('save')).toBeFalsy()
-    const errors = wrapper.find('.tform__errors')
-    expect(errors.exists()).toBe(true)
-    expect(errors.text()).toContain('行と列')
-    // 打った行は残っている
-    expect((wrapper.find('.field--coordinate .field--enum select').element as HTMLSelectElement).value).toBe('C')
-  })
 })
 
 describe('ドメイン型 B 群（画像）が入力できる（§1-3-3）', () => {
@@ -603,10 +608,8 @@ describe('判別子付き共用体が入力できる（§1-3-3 C 群）', () => 
     expect(wrapper.find('.field--ref .field__add').exists()).toBe(false)
 
     const coordinates = wrapper.findAll('.field--ref .field--tuple .field--coordinate')
-    await coordinates[0]!.find('.field--enum select').setValue('A')
-    await coordinates[0]!.find('.field--integer input').setValue('2')
-    await coordinates[1]!.find('.field--enum select').setValue('B')
-    await coordinates[1]!.find('.field--integer input').setValue('3')
+    await coordinates[0]!.find('select').setValue('A2')
+    await coordinates[1]!.find('select').setValue('B3')
 
     expect((await save(wrapper)).target).toEqual({
       kind: 'corridor',
@@ -621,8 +624,7 @@ describe('判別子付き共用体が入力できる（§1-3-3 C 群）', () => 
     const wrapper = mountForm(VARIANT_DEF)
     await wrapper.find('.field--ref .field--enum select').setValue('corridor')
     const first = wrapper.findAll('.field--ref .field--tuple .field--coordinate')[0]!
-    await first.find('.field--enum select').setValue('A')
-    await first.find('.field--integer input').setValue('2')
+    await first.find('select').setValue('A2')
 
     await wrapper.find('form').trigger('submit')
     expect(wrapper.emitted('save')).toBeFalsy()

@@ -1,7 +1,7 @@
 {
   "id": "builtin.dungeon-map",
   "name": "迷宮マップ",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "fields": [
     {
       "key": "overview",
@@ -353,17 +353,8 @@
           "fields": [
             {
               "key": "name",
-              "type": "enum",
-              "label": "名前",
-              "choices": [
-                "坂道",
-                "幻の路",
-                "シークレットドア",
-                "温泉",
-                "ものかげ",
-                "パスワード",
-                "自動販売機"
-              ]
+              "type": "string",
+              "label": "名前"
             },
             {
               "key": "target",

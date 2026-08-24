@@ -460,6 +460,28 @@ describe('日本語キーの正規化（NFC）', () => {
       expect(error.message).toContain('image')
     })
 
+    /**
+     * ⭐ トラップ名は自由入力（2026-08-24 実機フィードバック・§1-3-3d ②）。
+     * 本人:「**ルールブックに載ってる以外にもサプリメントとかいっぱいあります**」。
+     */
+    it('⭐⭐ 部屋のトラップ名は自由入力。⚠ 罠の「種類」（判別子）は選択式のまま', () => {
+      const def = readBundledTemplates().find((d) => d.id === 'builtin.dungeon-map')!
+      const traps = def.fields
+        .find((f) => f.key === 'rooms')!
+        .fields!.find((f) => f.key === 'traps')!
+      const name = traps.fields!.find((f) => f.key === 'name')!
+      expect(name.type).toBe('string')
+      // ⚠ 選択肢が残っていたら、サプリメントの罠が入力できないまま（消し忘れの検出）
+      expect(name.choices).toBeUndefined()
+
+      // ⚠⚠ **別物**: 道の罠は判別子付き共用体で、種類を選ぶと追加項目が変わる（§1-3-3d ②）
+      const corridorTrap = def.fields
+        .find((f) => f.key === 'corridors')!
+        .fields!.find((f) => f.key === 'trap')!
+      expect(corridorTrap.type).toBe('oneOf')
+      expect(corridorTrap.variants!.map((v) => v.value)).toContain('坂道')
+    })
+
     it('同梱の迷宮マップ定義は、この検証を通っている', () => {
       const def = readBundledTemplates().find((d) => d.id === 'builtin.dungeon-map')!
       const rooms = def.fields.find((f) => f.key === 'rooms')!
