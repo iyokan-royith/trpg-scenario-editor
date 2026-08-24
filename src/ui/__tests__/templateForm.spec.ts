@@ -266,12 +266,12 @@ describe('未対応の型があってもフォームが開ける（完了条件 
     // 位置（座標）＝行と列、向き（方向）
     await entrances.find('.field--coordinate .field--enum select').setValue('B')
     await entrances.find('.field--coordinate .field--integer input').setValue('3')
-    await entrances.find('.field--direction select').setValue('downRight')
+    await entrances.find('.field--direction select').setValue('右下')
 
     const data = await save(wrapper)
     const rows = data.entrances as Record<string, unknown>[]
-    expect(rows[0]!.at).toEqual({ row: 'B', column: 3 })
-    expect(rows[0]!.facing).toBe('downRight')
+    expect(rows[0]!.at).toEqual({ row: 'B', col: 3 })
+    expect(rows[0]!.facing).toBe('右下')
   })
 })
 
@@ -320,10 +320,10 @@ describe('ドメイン型 A 群が入力できる（§1-3-3）', () => {
 
     await at.find('.field--enum select').setValue('C')
     await at.find('.field--integer input').setValue('4')
-    expect((await save(wrapper)).at).toEqual({ row: 'C', column: 4 })
+    expect((await save(wrapper)).at).toEqual({ row: 'C', col: 4 })
   })
 
-  it('⭐ 方向は 8 つ（斜めを含む）。画面は日本語・保存は英語（§1-8-1）', async () => {
+  it('⭐ 方向は 8 つ（斜めを含む）。値は日本語＝読む側（サンプル）と同じ語彙', async () => {
     const wrapper = mountForm(DOMAIN_DEF)
     const select = wrapper.find('.field--direction select')
     const options = select.findAll('option')
@@ -332,11 +332,11 @@ describe('ドメイン型 A 群が入力できる（§1-3-3）', () => {
     expect(labels).toEqual(
       expect.arrayContaining(['上', '右上', '右', '右下', '下', '左下', '左', '左上']),
     )
-    // ⚠⚠ 画面に内部値が出ていない（§1-8-2c）
+    // ⚠⚠ 画面にも保存にも英語が出ない（§1-8-2c）。方向は識別子ではなく**値**である。
     for (const label of labels) expect(label).not.toMatch(/[a-zA-Z]/)
 
-    await select.setValue('upLeft')
-    expect((await save(wrapper)).facing).toBe('upLeft')
+    await select.setValue('左上')
+    expect((await save(wrapper)).facing).toBe('左上')
   })
 
   it('⭐⭐ 辺参照は座標＋方向の合成——独自の入力欄を持たない（`A2右下` に潰さない）', async () => {
@@ -348,9 +348,9 @@ describe('ドメイン型 A 群が入力できる（§1-3-3）', () => {
 
     await from.find('.field--coordinate .field--enum select').setValue('A')
     await from.find('.field--coordinate .field--integer input').setValue('1')
-    await from.find('.field--direction select').setValue('down')
+    await from.find('.field--direction select').setValue('下')
 
-    expect((await save(wrapper)).from).toEqual({ at: { row: 'A', column: 1 }, facing: 'down' })
+    expect((await save(wrapper)).from).toEqual({ at: { row: 'A', col: 1 }, direction: '下' })
   })
 
   it('半分だけの座標は保存されず、理由が画面に出る（打った値は消えない）', async () => {

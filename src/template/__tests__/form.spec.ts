@@ -23,7 +23,7 @@ import {
   pruneEmpty,
   validateDraft,
 } from '../form'
-import { DIRECTIONS, DIRECTION_LABELS, childFieldsOf } from '../domain'
+import { DIRECTIONS, childFieldsOf } from '../domain'
 
 /** 基本型 7 種＋未対応型を 1 つ混ぜた定義（この切れ目の全域）。 */
 const BASIC_FIELDS: FieldDef[] = [
@@ -61,8 +61,8 @@ const DOMAIN_FIELDS: FieldDef[] = [
 ]
 
 /** 座標の値を作る小道具（下書きの形をテスト側で手打ちしない）。 */
-function coordinate(row: string | '', column: number | null): Record<string, unknown> {
-  return { row, column }
+function coordinate(row: string | '', col: number | null): Record<string, unknown> {
+  return { row, col }
 }
 
 describe('型の日本語名（§1-8-2c: 内部の値を画面に出さない）', () => {
@@ -130,9 +130,9 @@ describe('下書きの初期値', () => {
 
   it('⭐ ドメイン型の空値——座標は行と列、辺参照は座標と方向の入れ物になる（合成）', () => {
     expect(createDraft(DOMAIN_FIELDS)).toEqual({
-      at: { row: '', column: null },
+      at: { row: '', col: null },
       facing: '',
-      from: { at: { row: '', column: null }, facing: '' },
+      from: { at: { row: '', col: null }, direction: '' },
       photo: null,
     })
   })
@@ -146,8 +146,8 @@ describe('下書きの初期値', () => {
       label: '位置',
       fields: [{ key: 'x', type: 'string', label: 'よこ' }],
     }
-    expect(childFieldsOf(hijacked).map((f) => f.key)).toEqual(['row', 'column'])
-    expect(createDraft([hijacked])).toEqual({ at: { row: '', column: null } })
+    expect(childFieldsOf(hijacked).map((f) => f.key)).toEqual(['row', 'col'])
+    expect(createDraft([hijacked])).toEqual({ at: { row: '', col: null } })
   })
 })
 
@@ -333,17 +333,15 @@ describe('未保存の印（§1-9-2）', () => {
  *   1 つでも抜けると「印が点かない」「空欄が保存される」「検証を素通りする」のどれかが
  *   **緑のまま**起きる（どれも画面には出ない壊れ方をする）。
  */
-describe('方向の語彙（§1-8-2c: 内部の値を画面に出さない）', () => {
-  it('8 方向あり、全部に日本語名がある（斜めを含む）', () => {
+describe('方向の語彙', () => {
+  it('8 方向ある（斜めを含む）。⚠ 値は日本語＝`enum` の choices と同じ「値」（§1-8-1）', () => {
     expect(DIRECTIONS).toHaveLength(8)
-    for (const direction of DIRECTIONS) {
-      expect(DIRECTION_LABELS[direction]).toBeTruthy()
-      expect(DIRECTION_LABELS[direction]).not.toBe(direction)
-    }
     // ⚠ 斜めが落ちていないこと（4 方向だけ実装した、を検出する）
-    expect(Object.values(DIRECTION_LABELS)).toEqual(
+    expect([...DIRECTIONS]).toEqual(
       expect.arrayContaining(['右上', '右下', '左下', '左上']),
     )
+    // ⚠⚠ 内部値を英語にすると、`formatValue` がそれをそのまま本文へ印字する（§1-8-2c）。
+    for (const direction of DIRECTIONS) expect(direction).not.toMatch(/[a-zA-Z]/)
   })
 })
 
@@ -359,21 +357,21 @@ describe('ドメイン型を保存する（pruneEmpty）', () => {
       at: coordinate('A', 2),
     })
     // ⚠⚠ 文字列に潰すと P4 で図が描けない（§1-3 の `ref` と同じ理由）。
-    expect(data.at).toEqual({ row: 'A', column: 2 })
+    expect(data.at).toEqual({ row: 'A', col: 2 })
   })
 
   it('方向は内部値（英語）で書く。空は書かない', () => {
-    const data = pruneEmpty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), facing: 'downRight' })
-    expect(data.facing).toBe('downRight')
+    const data = pruneEmpty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), facing: '右下' })
+    expect(data.facing).toBe('右下')
     expect('facing' in pruneEmpty(DOMAIN_FIELDS, createDraft(DOMAIN_FIELDS))).toBe(false)
   })
 
   it('辺参照は座標と方向の入れ子のまま書く（合成が保存形にも出る）', () => {
     const data = pruneEmpty(DOMAIN_FIELDS, {
       ...createDraft(DOMAIN_FIELDS),
-      from: { at: coordinate('C', 1), facing: 'down' },
+      from: { at: coordinate('C', 1), direction: '下' },
     })
-    expect(data.from).toEqual({ at: { row: 'C', column: 1 }, facing: 'down' })
+    expect(data.from).toEqual({ at: { row: 'C', col: 1 }, direction: '下' })
   })
 
   it('⭐⭐ 画像の実体は `data` に**絶対に**書かない（実体は images 側・§1-4）', () => {
@@ -388,7 +386,10 @@ describe('ドメイン型を保存する（pruneEmpty）', () => {
     // ⚠⚠ これは欠陥ではなく**分担**である。保存経路では `validateDraft()` が先に立ち、
     //   半分だけの座標はそこで止まる（下の describe で固定している）。
     //   ここを「揃っていなければ落とす」に変えると、打った値が黙って消える側の壊れ方になる。
-    const data = pruneEmpty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), at: coordinate('A', null) })
+    const data = pruneEmpty(DOMAIN_FIELDS, {
+      ...createDraft(DOMAIN_FIELDS),
+      at: coordinate('A', null),
+    })
     expect(data.at).toEqual({ row: 'A' })
     expect(validateDraft(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), at: coordinate('A', null) })).
       toHaveLength(1)
@@ -410,14 +411,14 @@ describe('ドメイン型の未保存の印（isDraftDirty）', () => {
   })
 
   it('方向を選ぶと打ちかけになる', () => {
-    expect(isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), facing: 'up' })).toBe(true)
+    expect(isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), facing: '上' })).toBe(true)
   })
 
   it('⭐ 辺参照の奥（座標の行）に打った値も見つかる（合成が 2 段目で切れていない）', () => {
     expect(
       isDraftDirty(DOMAIN_FIELDS, {
         ...createDraft(DOMAIN_FIELDS),
-        from: { at: coordinate('D', null), facing: '' },
+        from: { at: coordinate('D', null), direction: '' },
       }),
     ).toBe(true)
   })
@@ -439,8 +440,8 @@ describe('ドメイン型の検証（validateDraft）', () => {
         DOMAIN_FIELDS,
         draftWith({
           at: coordinate('Z', 26),
-          facing: 'upLeft',
-          from: { at: coordinate('A', 1), facing: 'left' },
+          facing: '左上',
+          from: { at: coordinate('A', 1), direction: '左' },
         }),
       ),
     ).toEqual([])
@@ -474,21 +475,23 @@ describe('ドメイン型の検証（validateDraft）', () => {
   })
 
   it('知らない向き（画面の選択肢から出ない値）は弾く', () => {
-    const errors = validateDraft(DOMAIN_FIELDS, draftWith({ facing: 'northeast' }))
+    const errors = validateDraft(DOMAIN_FIELDS, draftWith({ facing: '北東' }))
     expect(errors).toHaveLength(1)
     expect(errors[0]).toContain('向き')
-    expect(errors[0]).not.toContain('northeast')
   })
 
   it('⭐ 座標だけ・方向だけの辺参照は弾く（辺を指せない＝P4 で線が引けない）', () => {
-    const onlyAt = validateDraft(DOMAIN_FIELDS, draftWith({ from: { at: coordinate('A', 1), facing: '' } }))
+    const onlyAt = validateDraft(
+      DOMAIN_FIELDS,
+      draftWith({ from: { at: coordinate('A', 1), direction: '' } }),
+    )
     expect(onlyAt).toHaveLength(1)
     expect(onlyAt[0]).toContain('始点')
     expect(onlyAt[0]).toContain('座標と方向')
 
     const onlyFacing = validateDraft(
       DOMAIN_FIELDS,
-      draftWith({ from: { at: coordinate('', null), facing: 'up' } }),
+      draftWith({ from: { at: coordinate('', null), direction: '上' } }),
     )
     expect(onlyFacing).toHaveLength(1)
     expect(onlyFacing[0]).toContain('座標と方向')

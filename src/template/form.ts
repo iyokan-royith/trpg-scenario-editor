@@ -264,6 +264,7 @@ export function validateDraft(
       case 'direction': {
         if (isBlankScalar(value)) break
         // ⚠ 画面の選択肢からは出ない値。**保存済みデータ**や持ち込みの定義から来うる。
+        //   ⚠⚠ 8 方向の綴りは `domain.ts` が単一の真実（サンプルと同じ語彙）。
         if (!isDirection(value)) errors.push(`${where(label)}に知らない向きが入っています`)
         break
       }

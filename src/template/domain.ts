@@ -18,49 +18,46 @@ export const ROW_LETTERS: readonly string[] = Array.from({ length: 26 }, (_, i) 
   String.fromCharCode('A'.charCodeAt(0) + i),
 )
 
-/** 座標のキー。⚠ **保存形の契約**（§1-8-2b）。 */
+/**
+ * 座標のキー。⚠⚠ **これは新しく決めた語ではない。既に在る契約に合わせている。**
+ *   - `template/outputs.ts` の `isCoordinate()` が `{row: string, col: number}` を要求する
+ *   - 同梱サンプル `samples/mayoi-park.json` が既に `{"row":"C","col":3}` で書かれている
+ *   ⚠ ここを `column` にすると、**フォームで入れた座標だけが本文から消える**
+ *   （`formatValue` の「オブジェクトなら空文字」の枝に落ちる＝例外も警告も出ない）。
+ */
 export const COORDINATE_ROW_KEY = 'row'
-export const COORDINATE_COLUMN_KEY = 'column'
-
-/** 辺参照のキー。⚠ ドメインの語彙に合わせた（§1-8-2 の `位置`→`at` ／ `向き`→`facing`）。 */
-export const EDGE_REF_AT_KEY = 'at'
-export const EDGE_REF_FACING_KEY = 'facing'
+export const COORDINATE_COLUMN_KEY = 'col'
 
 /**
- * 8 方向（**斜めを含む**・§1-3 の型の表）。
- *
- * ⚠ 内部値は英語・画面は日本語（§1-8-1）。`fixed` / `perItem` / `section` と同じ線で、
- *   **列挙値は英語・表示は対応表を通す**（§1-8-2c: 内部の値をそのまま画面に出さない）。
- * ⚠ 並びは「上から時計回り」。画面の選択肢の順もこれをそのまま使う。
+ * 辺参照のキー。⚠ 同上——サンプルが既に `{"at": {...}, "direction": "下"}` で書かれている。
+ *   ⚠ **フィールドの key（`facing` 等）とは層が違う**。あちらはテンプレ定義が決める名前で、
+ *   こちらは `edgeRef` という**型の中身**の名前（型が決める・利用者は宣言しない）。
  */
-export const DIRECTIONS = [
-  'up',
-  'upRight',
-  'right',
-  'downRight',
-  'down',
-  'downLeft',
-  'left',
-  'upLeft',
-] as const
+export const EDGE_REF_AT_KEY = 'at'
+export const EDGE_REF_FACING_KEY = 'direction'
+
+/**
+ * 8 方向（**斜めを含む**・§1-3 の型の表）。⚠ 並びは「上から時計回り」。
+ *
+ * ⚠⚠ **値は日本語である。これは §1-8-1 の例外ではなく、そのままの適用**——
+ *   §1-8-1 の表は「テンプレ定義の `name` / 表示名の**値**」を日本語と定めており、
+ *   方向は `enum` の `choices`（`友好` / `敵対`）と同じ**値**であって識別子ではない。
+ *
+ * ⚠⚠ そして**これも新しく決めた語ではない**。同梱サンプル `samples/mayoi-park.json` が
+ *   既に `"direction": "右下"` で書かれている（＝**保存された形が契約**・§1-8-2b）。
+ *   英語の内部値にすると、`formatValue` がそれをそのまま本文へ出すので
+ *   **生成されたパートに `downRight` と印字される**（§1-8-2c の再演）。
+ */
+export const DIRECTIONS = ['上', '右上', '右', '右下', '下', '左下', '左', '左上'] as const
 
 export type Direction = (typeof DIRECTIONS)[number]
 
-export const DIRECTION_LABELS: Record<Direction, string> = {
-  up: '上',
-  upRight: '右上',
-  right: '右',
-  downRight: '右下',
-  down: '下',
-  downLeft: '左下',
-  left: '左',
-  upLeft: '左上',
-}
-
-// ⚠ 方向を足したのに表を直し忘れると、画面に `downRight` が出る（§1-8-2c の再演）。
-//   実行時に 1 度だけ気づけるようにしておく（テストが最初に踏む）。
-for (const direction of DIRECTIONS) {
-  if (!DIRECTION_LABELS[direction]) throw new Error(`DIRECTION_LABELS に「${direction}」がありません`)
+/**
+ * その欄の選択肢。⚠ `direction` は「**選択肢が型で固定された `enum`**」にすぎないので、
+ *   入力欄も検証も `enum` の経路をそのまま使う（型ごとの分岐を増やさない）。
+ */
+export function choicesOf(field: FieldDef): readonly string[] {
+  return field.type === 'direction' ? DIRECTIONS : (field.choices ?? [])
 }
 
 export function isDirection(value: unknown): value is Direction {

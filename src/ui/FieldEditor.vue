@@ -9,7 +9,7 @@ import {
   isSupportedFieldType,
   labelOf,
 } from '../template/form'
-import { DIRECTIONS, DIRECTION_LABELS, childFieldsOf } from '../template/domain'
+import { childFieldsOf, choicesOf } from '../template/domain'
 
 /**
  * 入力欄 1 つ（DESIGN-v0.md §4 の P2 完了条件 #2・#3）。
@@ -107,8 +107,11 @@ function onEnum(event: Event) {
   emit('update:modelValue', (event.target as HTMLSelectElement).value)
 }
 
-/** 8 方向（§1-3 の型の表）。⚠ **値は英語・見せるのは日本語**（§1-8-1 / §1-8-2c）。 */
-const directionChoices = () => DIRECTIONS.map((value) => ({ value, label: DIRECTION_LABELS[value] }))
+/**
+ * 選択肢。⚠ `direction`（8 方向）は**選択肢が型で固定された `enum`**なので、
+ *   入力欄を別に作らない（§1-3-3 の「新しい概念を足さない」はここにも効く）。
+ */
+const choices = () => choicesOf(props.field)
 
 /**
  * 画像を 1 枚選ぶ。⚠ **ここでは実体（Blob）を下書きに置くだけ**で、保存はしない。
@@ -183,24 +186,14 @@ function imageName(): string {
       <textarea rows="4" :value="asText()" @input="onText"></textarea>
     </label>
 
-    <label v-else-if="field.type === 'enum'" class="field__row">
+    <!-- ⚠ 方向も同じ枝を通る（選択肢が型で固定された列挙にすぎない） -->
+    <label v-else-if="field.type === 'enum' || field.type === 'direction'" class="field__row">
       <span class="field__label">{{ labelOf(field) }}</span>
       <select :value="asText()" @change="onEnum">
         <!-- ⚠ 空の選択肢を必ず置く。無いと「選んでいない」を表せず、先頭の値が黙って入る -->
         <option value="">（選んでいません）</option>
-        <option v-for="choice in field.choices ?? []" :key="choice" :value="choice">
+        <option v-for="choice in choices()" :key="choice" :value="choice">
           {{ choice }}
-        </option>
-      </select>
-    </label>
-
-    <!-- ⚠ 方向は「選択肢が固定された列挙」。値は英語・見せるのは日本語（§1-8-2c） -->
-    <label v-else-if="field.type === 'direction'" class="field__row">
-      <span class="field__label">{{ labelOf(field) }}</span>
-      <select :value="asText()" @change="onEnum">
-        <option value="">（選んでいません）</option>
-        <option v-for="choice in directionChoices()" :key="choice.value" :value="choice.value">
-          {{ choice.label }}
         </option>
       </select>
     </label>
