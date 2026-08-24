@@ -291,12 +291,59 @@ describe('日本語キーの正規化（NFC）', () => {
       expect(def.fields[0]!.fields![0]!.key).toBe(`${NFC}ぞう`)
     })
 
+    /**
+     * ドメイン型の宣言（2026-08-24・フォームその2）。
+     *
+     * ⚠⚠ **黙って無視する道を作らない**のがここの主題。
+     *   「宣言できるが効かない」は、書いた人には**書けたように見える**ので、
+     *   使う人が原因不明の欄を掴むまで誰も気づかない（この検証の目的そのもの）。
+     */
+    it('⭐⭐ 合成型（座標・辺参照）に fields は書けない（型が中身を決めているので黙って無視しない）', () => {
+      const error = readAndFail(
+        defWith([{ key: 'at', type: 'coordinate', fields: [{ key: 'x', type: 'string' }] }]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('fields[0].fields')
+      expect(error.message).toContain('型が決めています')
+
+      // ⚠ 陽性対照: 書かなければ通る（弾きすぎていない）
+      const ok = readTemplateDefinition(
+        defWith([
+          { key: 'at', type: 'coordinate' },
+          { key: 'facing', type: 'direction' },
+          { key: 'from', type: 'edgeRef' },
+        ]),
+        'ためし.json',
+      )
+      expect(ok.fields.map((f) => f.type)).toEqual(['coordinate', 'direction', 'edgeRef'])
+    })
+
+    it('⭐⭐ 画像の欄は入れ子・配列の中には置けない（実体のキーが 1 段しかないため・§1-4）', () => {
+      // ⚠⚠ 黙って落とすと「選んだ画像が保存されない」になり、画面には何も出ない。
+      const nested = readAndFail(
+        defWith([{ key: 'rooms', type: 'array', fields: [{ key: 'photo', type: 'image' }] }]),
+        'ためし.json',
+      )
+      expect(nested.message).toContain('fields[0].fields[0]')
+      expect(nested.message).toContain('image')
+
+      const inObject = readAndFail(
+        defWith([{ key: 'overview', type: 'object', fields: [{ key: 'photo', type: 'image' }] }]),
+        'ためし.json',
+      )
+      expect(inObject.message).toContain('fields[0].fields[0]')
+
+      // ⚠ 陽性対照: いちばん外側なら通る（CoC の顔写真がこれ・§1-3-3 の B 群）
+      const ok = readTemplateDefinition(defWith([{ key: 'photo', type: 'image' }]), 'ためし.json')
+      expect(ok.fields[0]!.type).toBe('image')
+    })
+
     it('同梱の迷宮マップ定義は、この検証を通っている', () => {
       const def = readBundledTemplates().find((d) => d.id === 'builtin.dungeon-map')!
       const rooms = def.fields.find((f) => f.key === 'rooms')!
       expect(rooms.type).toBe('array')
       expect(rooms.fields!.map((f) => f.key)).toContain('traps')
-      // ⚠ ドメイン型（この切れ目では入力できないもの）を実際に含んでいる＝完了条件 #6 の検証体
+      // ⚠ ドメイン型を実際に含んでいる（`ref` / `oneOf` が完了条件 #6 の検証体）
       expect(rooms.fields!.map((f) => f.type)).toContain('coordinate')
     })
   })

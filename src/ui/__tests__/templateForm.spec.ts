@@ -202,6 +202,8 @@ async function expandAllArrays(wrapper: ReturnType<typeof mountForm>) {
 
 describe('未対応の型があってもフォームが開ける（完了条件 #6）', () => {
   it('⭐ 同梱の迷宮マップ定義（ドメイン型を 6 種含む）でフォームが出る', async () => {
+    // ⚠ この 1 本は「まだ入力できません」の欄が**残っている**ことを見る（`ref` / `oneOf`）。
+    //   ドメイン型 4 種は入力できるようになったので、下の describe が別に見る。
     // ⚠ 手で作った定義ではなく**配布されている当のもの**を読む。
     //   ここが落ちると、実機で「テンプレを選んだ瞬間に画面が真っ白」になる。
     const def = readTemplateDefinition(dungeonMapText, 'src/templates/dungeon-map.json')
@@ -217,7 +219,7 @@ describe('未対応の型があってもフォームが開ける（完了条件 
     expect(unsupported[0]!.text()).toContain('まだ入力できません')
   })
 
-  it('未対応の知らせに内部の型名（英語）が漏れない（§1-8-2c）', async () => {
+  it('⏸ まだ入力できないのは `ref` と `oneOf` の 2 種だけ（内部名も漏れない・§1-8-2c）', async () => {
     const def = readTemplateDefinition(dungeonMapText, 'src/templates/dungeon-map.json')
     const wrapper = mountForm(def)
     await expandAllArrays(wrapper)
@@ -225,22 +227,214 @@ describe('未対応の型があってもフォームが開ける（完了条件 
       .findAll('.field__unsupported')
       .map((n) => n.text())
       .join('\n')
-    // ⚠ 6 種すべてが「日本語で」出ていることまで見る（1 種だけ通っても意味が無い）。
-    for (const internal of ['coordinate', 'direction', 'edgeRef', 'ref', 'oneOf', 'derived'] as const) {
+    for (const internal of ['ref', 'oneOf'] as const) {
       expect(text).not.toContain(internal)
       expect(text).toContain(FIELD_TYPE_LABELS[internal])
     }
+    // ⚠⚠ 入力できるようになった 4 種が、まだここに残っていないこと（＝欄が出ているはず）。
+    for (const done of ['coordinate', 'direction', 'edgeRef', 'image'] as const) {
+      expect(text).not.toContain(FIELD_TYPE_LABELS[done])
+    }
+    // ⚠ 導出値は別の文言・別のクラスで出る（下の describe が見る）
+    expect(text).not.toContain(FIELD_TYPE_LABELS.derived)
   })
 
-  it('未対応の型は保存されるデータに現れない', async () => {
+  /**
+   * ⚠⚠ **この 1 本は「入力できないから無い」→「空だから無い」に意味が変わった。**
+   *   旧版は `at` / `facing` が入力できない前提で `['id']` を期待していたが、
+   *   4 種が入力できるようになった今も**空のままなら緑になる**（＝検査として死んでいる）。
+   *   → 「打っていなければ書かれない」と「打てば書かれる」を**両方**置く。
+   */
+  it('⭐ 打っていないドメイン欄は保存されない（`ref` / `oneOf` も現れない）', async () => {
     const def = readTemplateDefinition(dungeonMapText, 'src/templates/dungeon-map.json')
     const wrapper = mountForm(def)
     await wrapper.find('.field--array .field__add').trigger('click') // entrances を 1 件
     const data = await save(wrapper)
     const entrances = data.entrances as Record<string, unknown>[]
     expect(entrances).toHaveLength(1)
-    // id だけがある（at・facing は入力できないので書かれない）
     expect(Object.keys(entrances[0]!)).toEqual(['id'])
+  })
+
+  it('⭐ 打ったドメイン欄は構造のまま保存される（同梱定義の `entrances[]`）', async () => {
+    const def = readTemplateDefinition(dungeonMapText, 'src/templates/dungeon-map.json')
+    const wrapper = mountForm(def)
+    const entrances = wrapper
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('入口'))!
+    await entrances.find('.field__add').trigger('click')
+
+    // 位置（座標）＝行と列、向き（方向）
+    await entrances.find('.field--coordinate .field--enum select').setValue('B')
+    await entrances.find('.field--coordinate .field--integer input').setValue('3')
+    await entrances.find('.field--direction select').setValue('downRight')
+
+    const data = await save(wrapper)
+    const rows = data.entrances as Record<string, unknown>[]
+    expect(rows[0]!.at).toEqual({ row: 'B', column: 3 })
+    expect(rows[0]!.facing).toBe('downRight')
+  })
+})
+
+/**
+ * ドメイン型 A 群・B 群の入力欄（§1-3-3）。
+ *
+ * ⚠⚠ 純ロジックが緑でも、**欄が出ていなければ何も入力できない**。
+ *   ここは必ず「欄を探す → 打つ → 保存を押す」の側から触る。
+ */
+const DOMAIN_DEF = readTemplateDefinition(
+  JSON.stringify({
+    id: 'test.domain',
+    name: 'ドメイン型',
+    version: '0.1.0',
+    fields: [
+      { key: 'at', type: 'coordinate', label: '位置' },
+      { key: 'facing', type: 'direction', label: '向き' },
+      { key: 'from', type: 'edgeRef', label: '始点' },
+      { key: 'photo', type: 'image', label: '顔写真' },
+      { key: 'trapCount', type: 'derived', label: 'トラップ数' },
+    ],
+    outputs: [{ kind: 'fixed', key: 'facing', label: '向き', form: 'section' }],
+  }),
+  'test.domain',
+)
+
+/** 保存を押して、渡ってきた images を取り出す。⚠ `data` とは別の引数（§1-4）。 */
+async function saveImages(
+  wrapper: ReturnType<typeof mountForm>,
+): Promise<Record<string, Blob>> {
+  await wrapper.find('form').trigger('submit')
+  const events = wrapper.emitted('save')!
+  return events[events.length - 1]![1] as Record<string, Blob>
+}
+
+describe('ドメイン型 A 群が入力できる（§1-3-3）', () => {
+  it('⭐ 座標は行（A〜Z の選択）と列（数）の 2 つを尋ねる', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const at = wrapper.find('.field--coordinate')
+    expect(at.exists()).toBe(true)
+    const rowOptions = at.findAll('.field--enum option').map((o) => o.text())
+    // 「（選んでいません）」＋ A〜Z
+    expect(rowOptions).toHaveLength(27)
+    expect(rowOptions).toContain('A')
+    expect(rowOptions).toContain('Z')
+
+    await at.find('.field--enum select').setValue('C')
+    await at.find('.field--integer input').setValue('4')
+    expect((await save(wrapper)).at).toEqual({ row: 'C', column: 4 })
+  })
+
+  it('⭐ 方向は 8 つ（斜めを含む）。画面は日本語・保存は英語（§1-8-1）', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const select = wrapper.find('.field--direction select')
+    const options = select.findAll('option')
+    expect(options).toHaveLength(9) // 「（選んでいません）」＋ 8 方向
+    const labels = options.map((o) => o.text())
+    expect(labels).toEqual(
+      expect.arrayContaining(['上', '右上', '右', '右下', '下', '左下', '左', '左上']),
+    )
+    // ⚠⚠ 画面に内部値が出ていない（§1-8-2c）
+    for (const label of labels) expect(label).not.toMatch(/[a-zA-Z]/)
+
+    await select.setValue('upLeft')
+    expect((await save(wrapper)).facing).toBe('upLeft')
+  })
+
+  it('⭐⭐ 辺参照は座標＋方向の合成——独自の入力欄を持たない（`A2右下` に潰さない）', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const from = wrapper.find('.field--edgeRef')
+    // ⚠ 中身は既存 2 型の欄そのもの（新しい概念を足していないことが画面からも見える）
+    expect(from.find('.field--coordinate').exists()).toBe(true)
+    expect(from.find('.field--direction').exists()).toBe(true)
+
+    await from.find('.field--coordinate .field--enum select').setValue('A')
+    await from.find('.field--coordinate .field--integer input').setValue('1')
+    await from.find('.field--direction select').setValue('down')
+
+    expect((await save(wrapper)).from).toEqual({ at: { row: 'A', column: 1 }, facing: 'down' })
+  })
+
+  it('半分だけの座標は保存されず、理由が画面に出る（打った値は消えない）', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    await wrapper.find('.field--coordinate .field--enum select').setValue('C')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('save')).toBeFalsy()
+    const errors = wrapper.find('.tform__errors')
+    expect(errors.exists()).toBe(true)
+    expect(errors.text()).toContain('行と列')
+    // 打った行は残っている
+    expect((wrapper.find('.field--coordinate .field--enum select').element as HTMLSelectElement).value).toBe('C')
+  })
+})
+
+describe('ドメイン型 B 群（画像）が入力できる（§1-3-3）', () => {
+  /** ⚠ jsdom の `<input type="file">` は代入できないので、`files` を差し込む。 */
+  function chooseFile(input: HTMLInputElement, file: File) {
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    input.dispatchEvent(new Event('change'))
+  }
+
+  it('⭐ フォームの中でファイルを選べ、実体は `data` ではなく images 側へ渡る（§1-4）', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const input = wrapper.find('.field--image input[type="file"]')
+    expect(input.exists()).toBe(true)
+    expect(wrapper.find('.field--image').text()).toContain('画像を選んでいません')
+
+    const file = new File([new Uint8Array([7, 7])], 'かお.png', { type: 'image/png' })
+    chooseFile(input.element as HTMLInputElement, file)
+    await wrapper.vm.$nextTick()
+    // 選んだことが画面に出る（何も起きないと「押せていない」と区別が付かない）
+    expect(wrapper.find('.field--image').text()).toContain('かお.png')
+
+    await wrapper.find('form').trigger('submit')
+    const events = wrapper.emitted('save')!
+    const [data, images] = events[events.length - 1]! as [
+      Record<string, unknown>,
+      Record<string, Blob>,
+    ]
+    // ⚠⚠ data には**絶対に**入らない（Blob が md・zip・保存の全経路へ紛れ込む）
+    expect('photo' in data).toBe(false)
+    expect(images.photo).toBe(file)
+  })
+
+  it('選んだ画像を外せる（未選択に戻る）', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const input = wrapper.find('.field--image input[type="file"]')
+    chooseFile(input.element as HTMLInputElement, new File(['x'], 'け.png', { type: 'image/png' }))
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('.field--image button').trigger('click')
+    expect(wrapper.find('.field--image').text()).toContain('画像を選んでいません')
+    expect(await saveImages(wrapper)).toEqual({})
+  })
+
+  it('⭐ 何も選ばなければ images は空（否定形の述語）', async () => {
+    expect(await saveImages(mountForm(DOMAIN_DEF))).toEqual({})
+  })
+})
+
+describe('⭐⭐ 導出値は尋ねない（§1-3-3）', () => {
+  it('入力欄が出ず、「まだ」ではないと分かる文言が出る', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const derived = wrapper.find('.field__derived')
+    expect(derived.exists()).toBe(true)
+    expect(derived.text()).toContain('トラップ数') // label
+    expect(derived.text()).toContain('自動で決まるので入力しません')
+    // ⚠⚠ 「まだ」と言わない——待っていれば入力できるようになる、という嘘になる
+    expect(derived.text()).not.toContain('まだ')
+    // ⚠ 未対応型の枠にも入っていない（同じ文言・同じクラスに畳まない）
+    expect(wrapper.find('.field--derived .field__unsupported').exists()).toBe(false)
+    // ⚠ 内部の型名が漏れない（§1-8-2c）
+    expect(derived.text()).not.toContain('derived')
+    // 入力欄そのものが無い
+    expect(wrapper.find('.field--derived input').exists()).toBe(false)
+    expect(wrapper.find('.field--derived select').exists()).toBe(false)
+  })
+
+  it('導出値は保存されるデータに現れない（導出したものをデータ側に持たせない・P0 知見 1）', async () => {
+    const wrapper = mountForm(DOMAIN_DEF)
+    const data = await save(wrapper)
+    expect('trapCount' in data).toBe(false)
   })
 })
 

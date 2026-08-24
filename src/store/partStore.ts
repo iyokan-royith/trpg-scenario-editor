@@ -82,13 +82,19 @@ export const usePartStore = defineStore('parts', () => {
    * テンプレのフォームから作られたインスタンスを 1 件足す（P2 完了条件 #4）。
    * ⚠ **保存はしない**（`addImage` と同じ線。呼び手が `saveInstance()` へ渡す）。
    */
-  function createInstance(templateId: string, data: Record<string, unknown>): TemplateInstance {
+  function createInstance(
+    templateId: string,
+    data: Record<string, unknown>,
+    images: Record<string, Blob> = {},
+  ): TemplateInstance {
     const instance: TemplateInstance = {
       id: newId('instance'),
       templateId,
       data,
-      // ⚠ 画像の実体はフォームからは入らない（`image` 型は入力 UI が未対応）。
-      images: {},
+      // ⚠ フォームの `image` 欄で選ばれた実体（`collectImages()` の結果）。
+      //   ⚠⚠ **`addImage()` と経路を分けない**——あちらは「素材を追加」ボタン専用の入口で、
+      //   定義に `image` 欄を持つ**利用者のテンプレ**はこちらを通る（§1-7-2 の線）。
+      images,
     }
     upsertInstance(instance)
     return instance

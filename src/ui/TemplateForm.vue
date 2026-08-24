@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { TemplateDefinition } from '../template/model'
-import { createDraft, isDraftDirty, pruneEmpty, validateDraft } from '../template/form'
+import { collectImages, createDraft, isDraftDirty, pruneEmpty, validateDraft } from '../template/form'
 import FieldEditor from './FieldEditor.vue'
 
 /**
@@ -12,7 +12,11 @@ import FieldEditor from './FieldEditor.vue'
  */
 const props = defineProps<{ def: TemplateDefinition }>()
 const emit = defineEmits<{
-  save: [data: Record<string, unknown>]
+  /**
+   * ⚠ **画像の実体（`images`）は `data` と別に渡す**（§1-4: 実体は `TemplateInstance.images`）。
+   *   `data` に混ぜると、Blob が md 展開・zip 出力・保存のすべてに紛れ込む。
+   */
+  save: [data: Record<string, unknown>, images: Record<string, Blob>]
   cancel: []
   /**
    * 下書きに値が入っているか（§1-9-2 の未保存の印）。
@@ -50,7 +54,11 @@ function onSubmit() {
   if (errors.value.length > 0) return
   // ⚠ 空欄は書かない（`pruneEmpty` の理由を参照）。ここで下書きをそのまま渡すと、
   //   「入力していない」が「空文字が入力された」として保存される。
-  emit('save', pruneEmpty(props.def.fields, draft.value))
+  emit(
+    'save',
+    pruneEmpty(props.def.fields, draft.value),
+    collectImages(props.def.fields, draft.value),
+  )
 }
 </script>
 

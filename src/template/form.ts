@@ -6,13 +6,23 @@
  *   → 下書きの初期化・空値の刈り取り・要素 id の採番は**マウント無しで検査できる**。
  */
 import { FIELD_TYPES, type ArrayItem, type FieldDef, type FieldType } from './model'
+import {
+  COORDINATE_COLUMN_KEY,
+  COORDINATE_ROW_KEY,
+  EDGE_REF_FACING_KEY,
+  EDGE_REF_AT_KEY,
+  ROW_LETTERS,
+  childFieldsOf,
+  isDirection,
+} from './domain'
 
 /**
  * ⭐ フォームで**入力できる**型（この切れ目の範囲）。
  *
- * ⚠⚠ **残り 7 種（ドメイン型）は「落ちない」だけで入力できない**（完了条件 #6）。
- *   同梱の迷宮マップ定義は `coordinate` / `direction` / `edgeRef` / `ref` / `oneOf` / `derived` を
- *   実際に含んでいるので、**同梱品を開くこと自体がこの性質の検査**になっている。
+ * ⚠ 残るのは `ref` / `oneOf` の 2 種で、これは「**まだ**入力できない」（判断待ち・§1-3-3a）。
+ *   `derived` は下の `NEVER_ASKED_FIELD_TYPES` を参照——**別の理由で欄が出ない**ので混ぜない。
+ *   同梱の迷宮マップ定義は両方を実際に含んでいるので、
+ *   **同梱品を開くこと自体がこの性質の検査**になっている。
  */
 export const SUPPORTED_FIELD_TYPES = [
   'string',
@@ -22,12 +32,30 @@ export const SUPPORTED_FIELD_TYPES = [
   'enum',
   'array',
   'object',
+  'coordinate',
+  'direction',
+  'edgeRef',
+  'image',
 ] as const satisfies readonly FieldType[]
 
 export type SupportedFieldType = (typeof SUPPORTED_FIELD_TYPES)[number]
 
 export function isSupportedFieldType(type: FieldType): type is SupportedFieldType {
   return (SUPPORTED_FIELD_TYPES as readonly FieldType[]).includes(type)
+}
+
+/**
+ * ⭐⭐ **入力欄を出さない型。ただし「まだ」ではなく「これからも尋ねない」**（§1-3-3）。
+ *
+ * ⚠⚠ `SUPPORTED_FIELD_TYPES` の否定で表さないのが要点。
+ *   導出値は**導出されるから導出値**であって、人が入力するものではない
+ *   （P0 知見 1: 導出したものをデータ側に持たせない）。
+ *   「まだ入力できません」と出すと、**待っていれば入力できるようになる**という嘘になる。
+ */
+export const NEVER_ASKED_FIELD_TYPES = ['derived'] as const satisfies readonly FieldType[]
+
+export function isNeverAskedFieldType(type: FieldType): boolean {
+  return (NEVER_ASKED_FIELD_TYPES as readonly FieldType[]).includes(type)
 }
 
 /**
@@ -96,6 +124,8 @@ function blankValueOf(field: FieldDef): unknown {
     case 'string':
     case 'text':
     case 'enum':
+    // ⚠ 方向は「選択肢が固定された `enum`」。空文字＝選んでいない。
+    case 'direction':
       return ''
     case 'integer':
       // ⚠ `0` にしない。0 は「入力された 0」と区別が付かなくなる（下の `pruneEmpty` も参照）。
@@ -104,15 +134,22 @@ function blankValueOf(field: FieldDef): unknown {
       return false
     case 'array':
       return []
+    case 'image':
+      // ⚠ 実体（Blob）は `data` ではなく `TemplateInstance.images` へ行く（§1-4 / §1-7-2）。
+      //   下書きの間だけここに置き、保存時に `collectImages()` が取り出す。
+      return null
     case 'object':
-      return createDraft(field.fields ?? [])
+    case 'coordinate':
+    case 'edgeRef':
+      // ⚠ 合成型の子は**型が決めている**（定義の `fields` は見ない・`domain.ts` を参照）。
+      return createDraft(childFieldsOf(field))
     default:
       return undefined
   }
 }
 
 /** フォームの下書き（＝入力中の入れ物）を作る。 */
-export function createDraft(fields: FieldDef[]): Record<string, unknown> {
+export function createDraft(fields: readonly FieldDef[]): Record<string, unknown> {
   const draft: Record<string, unknown> = {}
   for (const field of fields) {
     const blank = blankValueOf(field)
@@ -122,8 +159,45 @@ export function createDraft(fields: FieldDef[]): Record<string, unknown> {
 }
 
 /** 配列に足す要素 1 件。⚠ **id を必ず持つ**（P0 知見 2）。 */
-export function createArrayItem(fields: FieldDef[]): ArrayItem {
+export function createArrayItem(fields: readonly FieldDef[]): ArrayItem {
   return { ...createDraft(fields), [ITEM_ID_KEY]: newItemId() } as ArrayItem
+}
+
+/** 下書きの中の「オブジェクトらしき値」。⚠ 型が合わなければ空として扱う（落とさない）。 */
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+/** 未入力（空文字・`null`・`undefined`）か。⚠ `0` と `false` は**入力された値**なので含めない。 */
+function isBlankScalar(value: unknown): boolean {
+  return value === null || value === undefined || value === ''
+}
+
+/**
+ * 座標の状態。⚠ **「空」と「半分だけ」と「揃っている」の 3 つを区別する**のが要点で、
+ *   これを 2 値（空か否か）にすると、行だけ入れた座標が黙って保存される。
+ */
+function coordinateState(value: unknown): 'blank' | 'partial' | 'complete' {
+  const record = asRecord(value)
+  const row = record[COORDINATE_ROW_KEY]
+  const column = record[COORDINATE_COLUMN_KEY]
+  const rowBlank = isBlankScalar(row)
+  const columnBlank = isBlankScalar(column)
+  if (rowBlank && columnBlank) return 'blank'
+  if (rowBlank || columnBlank) return 'partial'
+  return 'complete'
+}
+
+/** 辺参照の状態（座標と方向の合成なので、両方が揃って初めて `complete`）。 */
+function edgeRefState(value: unknown): 'blank' | 'partial' | 'complete' {
+  const record = asRecord(value)
+  const at = coordinateState(record[EDGE_REF_AT_KEY])
+  const facingBlank = isBlankScalar(record[EDGE_REF_FACING_KEY])
+  if (at === 'blank' && facingBlank) return 'blank'
+  if (at === 'complete' && !facingBlank) return 'complete'
+  return 'partial'
 }
 
 /**
@@ -144,7 +218,7 @@ export function createArrayItem(fields: FieldDef[]): ArrayItem {
  * @returns 誤りの説明。**空配列なら保存してよい**
  */
 export function validateDraft(
-  fields: FieldDef[],
+  fields: readonly FieldDef[],
   draft: Record<string, unknown>,
   path: string[] = [],
 ): string[] {
@@ -166,10 +240,51 @@ export function validateDraft(
         }
         break
       }
+      case 'coordinate': {
+        // ⚠ 子（行＝enum・列＝integer）の検査は既存の経路がやる。ここは**合成としての整合**だけ。
+        errors.push(...validateDraft(childFieldsOf(field), asRecord(value), [...path, `「${label}」`]))
+        const state = coordinateState(value)
+        if (state === 'partial') {
+          errors.push(`${where(label)}は行と列の両方を入れてください`)
+          break
+        }
+        if (state === 'blank') break
+        const record = asRecord(value)
+        const row = record[COORDINATE_ROW_KEY]
+        const column = record[COORDINATE_COLUMN_KEY]
+        if (typeof row !== 'string' || !ROW_LETTERS.includes(row)) {
+          errors.push(`${where(label)}の行は A〜Z で入れてください`)
+        }
+        // ⚠ 整数かどうかは子の検査が言うので、ここでは重ねて言わない（同じ誤りを 2 行出さない）。
+        if (typeof column === 'number' && Number.isInteger(column) && column < 1) {
+          errors.push(`${where(label)}の列は 1 以上で入れてください`)
+        }
+        break
+      }
+      case 'direction': {
+        if (isBlankScalar(value)) break
+        // ⚠ 画面の選択肢からは出ない値。**保存済みデータ**や持ち込みの定義から来うる。
+        if (!isDirection(value)) errors.push(`${where(label)}に知らない向きが入っています`)
+        break
+      }
+      case 'edgeRef': {
+        errors.push(...validateDraft(childFieldsOf(field), asRecord(value), [...path, `「${label}」`]))
+        // ⚠⚠ 座標だけ・方向だけの辺参照は「辺」を指せない（＝P4 で線が引けない）。
+        if (edgeRefState(value) === 'partial') {
+          errors.push(`${where(label)}は座標と方向の両方を入れてください`)
+        }
+        break
+      }
+      case 'image': {
+        if (value === null || value === undefined) break
+        // ⚠ 選び直しの経路が壊れて別のものが入った場合に、保存の手前で止める。
+        if (!(value instanceof Blob)) errors.push(`${where(label)}に選んだファイルを読めませんでした`)
+        break
+      }
       case 'object': {
         if (typeof value !== 'object' || value === null || Array.isArray(value)) break
         errors.push(
-          ...validateDraft(field.fields ?? [], value as Record<string, unknown>, [
+          ...validateDraft(childFieldsOf(field), value as Record<string, unknown>, [
             ...path,
             `「${label}」`,
           ]),
@@ -181,7 +296,7 @@ export function validateDraft(
         value.forEach((item, index) => {
           if (typeof item !== 'object' || item === null) return
           errors.push(
-            ...validateDraft(field.fields ?? [], item as Record<string, unknown>, [
+            ...validateDraft(childFieldsOf(field), item as Record<string, unknown>, [
               ...path,
               // ⚠ 添字ではなく「何件目」。画面の `field__itemNo` と同じ数え方にする。
               `${label} ${index + 1} 件目`,
@@ -208,13 +323,14 @@ export function validateDraft(
  * ⚠ ここは「空の下書き（`createDraft`）と違うか」だけを見る。**保存してよいかは見ない**
  *   （それは `validateDraft()` の責務）。
  */
-export function isDraftDirty(fields: FieldDef[], draft: Record<string, unknown>): boolean {
+export function isDraftDirty(fields: readonly FieldDef[], draft: Record<string, unknown>): boolean {
   return fields.some((field) => {
     const value = draft[field.key]
     switch (field.type) {
       case 'string':
       case 'text':
       case 'enum':
+      case 'direction':
         // ⚠ 空白だけは打っていないのと同じに扱う（`pruneEmpty` の trim と同じ線）。
         return typeof value === 'string' && value.trim() !== ''
       case 'integer':
@@ -225,15 +341,23 @@ export function isDraftDirty(fields: FieldDef[], draft: Record<string, unknown>)
       case 'array':
         // ⚠ 要素の中身は見ない。1 件足した時点で「打ちかけ」である。
         return Array.isArray(value) && value.length > 0
+      case 'image':
+        // ⚠ 1 枚選んだ時点で打ちかけ（**保存されず消えると気づけない**種類の入力なので）。
+        return value instanceof Blob
+      case 'coordinate':
+      case 'edgeRef':
+        // ⚠ 半分だけ入っている座標も「打ちかけ」。ここで false にすると、
+        //   行だけ選んで本文へ移った人の入力が印の無いまま消える。
+        return isDraftDirty(childFieldsOf(field), asRecord(value))
       case 'object':
         return (
           typeof value === 'object' &&
           value !== null &&
           !Array.isArray(value) &&
-          isDraftDirty(field.fields ?? [], value as Record<string, unknown>)
+          isDraftDirty(childFieldsOf(field), value as Record<string, unknown>)
         )
       default:
-        // 入力できない型は下書きにキーが無い（`blankValueOf` を参照）。
+        // 入力できない型・尋ねない型は下書きにキーが無い（`blankValueOf` を参照）。
         return false
     }
   })
@@ -254,7 +378,7 @@ export function isDraftDirty(fields: FieldDef[], draft: Record<string, unknown>)
  * ⚠ 配列要素の `id` は空判定に関わらず必ず残す。
  */
 export function pruneEmpty(
-  fields: FieldDef[],
+  fields: readonly FieldDef[],
   draft: Record<string, unknown>,
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {}
@@ -263,7 +387,8 @@ export function pruneEmpty(
     switch (field.type) {
       case 'string':
       case 'text':
-      case 'enum': {
+      case 'enum':
+      case 'direction': {
         const text = typeof value === 'string' ? value.trim() : ''
         if (text !== '') data[field.key] = text
         break
@@ -279,24 +404,55 @@ export function pruneEmpty(
       case 'array': {
         if (!Array.isArray(value)) break
         const items = value.map((item) => ({
-          ...pruneEmpty(field.fields ?? [], item as Record<string, unknown>),
+          ...pruneEmpty(childFieldsOf(field), item as Record<string, unknown>),
           [ITEM_ID_KEY]: (item as ArrayItem)[ITEM_ID_KEY],
         }))
         // ⚠ 空配列も書く。「1 件も無い」は入力の結果であって、未入力ではない。
         data[field.key] = items
         break
       }
-      case 'object': {
+      case 'object':
+      case 'coordinate':
+      case 'edgeRef': {
         if (typeof value !== 'object' || value === null) break
-        const nested = pruneEmpty(field.fields ?? [], value as Record<string, unknown>)
+        const nested = pruneEmpty(childFieldsOf(field), value as Record<string, unknown>)
         // ⚠ 中身が全部空なら丸ごと書かない（＝親も「無い」扱いにする）。
         if (Object.keys(nested).length > 0) data[field.key] = nested
         break
       }
+      case 'image':
+        // ⚠⚠ **画像の実体は `data` に書かない**（§1-4: 実体は `TemplateInstance.images`）。
+        //   ここで Blob を書くと、md 展開・zip 出力・保存のすべてに
+        //   「data の中に Blob が居る」という別経路が生まれる。→ `collectImages()` が取り出す。
+        break
       default:
-        // 未対応の型は下書きにも無いので、ここへは来ない（来ても書かない）。
+        // 入力できない型・尋ねない型は下書きにも無いので、ここへは来ない（来ても書かない）。
         break
     }
   }
   return data
+}
+
+/**
+ * ⭐ 下書きから `TemplateInstance.images` を作る（§1-4 / §1-7-2）。
+ *
+ * ⚠⚠ **値ではなく定義から歩く。** 「下書きの中の Blob を拾う」と書くと、
+ *   入れ子や配列に紛れ込んだ Blob を偶然拾う経路ができる。
+ *   宣言（`image` 型の欄）に聞くのは `imageFieldKeyOf()` / `replaceImage()` と**同じ線**である。
+ *
+ * ⚠ **トップレベルの `image` 欄しか見ない。** `images` のキーはフィールド名 1 段
+ *   （§1-4）なので、入れ子の中の画像はキーを表せない。
+ *   → 黙って落とさないために、**入れ子の中の `image` 宣言は `template/schema.ts` が読み込みで弾く**。
+ */
+export function collectImages(
+  fields: readonly FieldDef[],
+  draft: Record<string, unknown>,
+): Record<string, Blob> {
+  const images: Record<string, Blob> = {}
+  for (const field of fields) {
+    if (field.type !== 'image') continue
+    const value = draft[field.key]
+    if (value instanceof Blob) images[field.key] = value
+  }
+  return images
 }

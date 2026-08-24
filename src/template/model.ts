@@ -14,10 +14,11 @@ export type PartForm = 'section' | 'inline' | 'figure'
 
 /**
  * フォームに出る入力欄の型（1-3 の表）。
- * ⚠ v0 で**フォームまで実装済み**なのは基本型 7 種
- *   （`string` / `integer` / `boolean` / `text` / `enum` / `array` / `object`）だけ。
- *   残る 7 種（ドメイン型）は型としては宣言でき、`outputs` からも読めるが、
- *   **入力 UI は後続の切れ目の責務**（`template/form.ts` の `SUPPORTED_FIELD_TYPES` が単一の真実）。
+ * ⚠ v0 で**フォームまで実装済み**なのは基本型 7 種＋ドメイン型 4 種
+ *   （`coordinate` / `direction` / `edgeRef` / `image`）。
+ *   `derived` は**これからも尋ねない**（導出値なので・`NEVER_ASKED_FIELD_TYPES`）、
+ *   `ref` / `oneOf` は**まだ**入力できない（§1-3-3a の判断待ち）。
+ *   → 単一の真実は `template/form.ts` の `SUPPORTED_FIELD_TYPES` / `NEVER_ASKED_FIELD_TYPES`。
  */
 export const FIELD_TYPES = [
   'string',

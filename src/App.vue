@@ -520,17 +520,21 @@ const replaceableInstanceIds = computed(() =>
  * ⚠ **パートは作らない。** データを足すだけで、パートは `derivePartsOf()` が導出する
  *   （P0 知見 1: 導出したものをデータ側に持たせない）。
  */
-async function onFormSave(data: Record<string, unknown>) {
+async function onFormSave(data: Record<string, unknown>, images: Record<string, Blob>) {
   const def = selectedTemplate.value
   if (!def) return
   // ⚠ 先に閉じる（§1-9-5 の #5「保存でフォームのタブが閉じ、本文へ戻る」）。
   //   保存の成否を待ってから閉じると、書き込みが遅い環境で**押したのに閉じない**時間ができる。
   closeFormTab()
-  await onCreateFromTemplate(def.id, data)
+  await onCreateFromTemplate(def.id, data, images)
 }
 
-async function onCreateFromTemplate(templateId: string, data: Record<string, unknown>) {
-  const instance = store.createInstance(templateId, data)
+async function onCreateFromTemplate(
+  templateId: string,
+  data: Record<string, unknown>,
+  images: Record<string, Blob> = {},
+) {
+  const instance = store.createInstance(templateId, data, images)
   try {
     await saveInstance(instance)
     const born = store.partsOfInstance(instance.id).length

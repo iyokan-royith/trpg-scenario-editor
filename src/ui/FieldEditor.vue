@@ -5,9 +5,11 @@ import {
   ITEM_ID_KEY,
   createArrayItem,
   createDraft,
+  isNeverAskedFieldType,
   isSupportedFieldType,
   labelOf,
 } from '../template/form'
+import { DIRECTIONS, DIRECTION_LABELS, childFieldsOf } from '../template/domain'
 
 /**
  * 入力欄 1 つ（DESIGN-v0.md §4 の P2 完了条件 #2・#3）。
@@ -21,16 +23,26 @@ import {
  *   画面上は入力できているのに保存されない、という壊れ方をする。
  *   だから検査は必ず**いちばん深い所まで打って、保存された値を見る**（`templateForm.spec.ts`）。
  */
+import { ref } from 'vue'
+
 const props = defineProps<{ field: FieldDef; modelValue: unknown }>()
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>()
 
-/** 未対応の型（ドメイン型 7 種）。⚠ **落とさず、対応していないと分かる形で出す**（完了条件 #6）。 */
+/** 未対応の型（`ref` / `oneOf`）。⚠ **落とさず、対応していないと分かる形で出す**（完了条件 #6）。 */
 const supported = () => isSupportedFieldType(props.field.type)
+
+/**
+ * ⭐⭐ **尋ねない型**（`derived`）。⚠ 「まだ入力できません」と**同じ文言にしない**（§1-3-3）。
+ *   導出値は導出されるものなので、待っていても入力欄は出ない——
+ *   「まだ」と書くと、いつか出るという嘘になる。
+ */
+const neverAsked = () => isNeverAskedFieldType(props.field.type)
 
 /** ⚠ 内部の型名（`coordinate` 等）をそのまま画面に出さない（§1-8-2c）。 */
 const typeLabel = () => FIELD_TYPE_LABELS[props.field.type]
 
-const childFields = () => props.field.fields ?? []
+/** ⚠ 合成型（座標・辺参照）の子は**型が決めている**。定義の `fields` は見ない（`domain.ts`）。 */
+const childFields = () => childFieldsOf(props.field)
 
 /** 文字列として画面に出す値。⚠ 型が合わないデータ（古い保存など）でも落ちないように畳む。 */
 function asText(): string {
@@ -94,12 +106,59 @@ function onBoolean(event: Event) {
 function onEnum(event: Event) {
   emit('update:modelValue', (event.target as HTMLSelectElement).value)
 }
+
+/** 8 方向（§1-3 の型の表）。⚠ **値は英語・見せるのは日本語**（§1-8-1 / §1-8-2c）。 */
+const directionChoices = () => DIRECTIONS.map((value) => ({ value, label: DIRECTION_LABELS[value] }))
+
+/**
+ * 画像を 1 枚選ぶ。⚠ **ここでは実体（Blob）を下書きに置くだけ**で、保存はしない。
+ *   `TemplateInstance.images` へ移すのは保存時（`collectImages()`）。
+ */
+const imageInput = ref<HTMLInputElement | null>(null)
+
+function onImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // ⚠ 選び直しを取り消した（ファイルを選ばずに閉じた）ときは、いま持っている画像を消さない。
+  if (!file) return
+  emit('update:modelValue', file)
+}
+
+function clearImage() {
+  // ⚠ 入力欄の値も捨てる。捨てないと**同じファイルを選び直しても change が飛ばない**。
+  if (imageInput.value) imageInput.value.value = ''
+  emit('update:modelValue', null)
+}
+
+/**
+ * 画像が 1 枚選ばれているか。
+ * ⚠ テンプレートの式から `Blob` は引けない（描画スコープに居るのは setup の束縛だけ）ので、
+ *   判定はここに置く。⚠⚠ 実際、テンプレートに `modelValue instanceof Blob` と書いたら
+ *   **描画そのものが例外で落ちた**（型検査は通る）。
+ */
+function hasImage(): boolean {
+  return props.modelValue instanceof Blob
+}
+
+/** 選んだ画像の名前。⚠ 名前を持たない Blob もあるので、そのときは「選んだ」ことだけ言う。 */
+function imageName(): string {
+  const value = props.modelValue
+  if (!(value instanceof Blob)) return '画像を選んでいません'
+  const name = (value as File).name
+  return name ? name : '画像を選びました'
+}
 </script>
 
 <template>
   <div class="field" :class="`field--${field.type}`">
+    <!-- ⭐⭐ 尋ねない型（導出値）: 「まだ」ではない。待っても入力欄は出ない（§1-3-3） -->
+    <p v-if="neverAsked()" class="field__derived">
+      <span class="field__label">{{ labelOf(field) }}</span>
+      <span class="field__note">（{{ typeLabel() }}）は自動で決まるので入力しません</span>
+    </p>
+
     <!-- 未対応の型: 落とさず「まだ入力できない」と言う（完了条件 #6） -->
-    <p v-if="!supported()" class="field__unsupported">
+    <p v-else-if="!supported()" class="field__unsupported">
       <span class="field__label">{{ labelOf(field) }}</span>
       <span class="field__note">（{{ typeLabel() }}）はまだ入力できません</span>
     </p>
@@ -135,7 +194,30 @@ function onEnum(event: Event) {
       </select>
     </label>
 
-    <fieldset v-else-if="field.type === 'object'" class="field__group">
+    <!-- ⚠ 方向は「選択肢が固定された列挙」。値は英語・見せるのは日本語（§1-8-2c） -->
+    <label v-else-if="field.type === 'direction'" class="field__row">
+      <span class="field__label">{{ labelOf(field) }}</span>
+      <select :value="asText()" @change="onEnum">
+        <option value="">（選んでいません）</option>
+        <option v-for="choice in directionChoices()" :key="choice.value" :value="choice.value">
+          {{ choice.label }}
+        </option>
+      </select>
+    </label>
+
+    <!-- ⚠ 画像の実体は `data` ではなく `TemplateInstance.images` へ行く（保存時に移す） -->
+    <div v-else-if="field.type === 'image'" class="field__row">
+      <span class="field__label">{{ labelOf(field) }}</span>
+      <input ref="imageInput" type="file" accept="image/*" @change="onImage" />
+      <span class="field__imageName">{{ imageName() }}</span>
+      <button v-if="hasImage()" type="button" @click="clearImage">画像を外す</button>
+    </div>
+
+    <!-- ⭐ 座標・辺参照は**合成**（`domain.ts`）。入れ子と同じ経路で描く＝新しい概念を足さない -->
+    <fieldset
+      v-else-if="field.type === 'object' || field.type === 'coordinate' || field.type === 'edgeRef'"
+      class="field__group"
+    >
       <legend>{{ labelOf(field) }}</legend>
       <FieldEditor
         v-for="child in childFields()"
@@ -191,12 +273,17 @@ function onEnum(event: Event) {
   flex: 1;
   min-width: 0;
 }
-.field__unsupported {
+.field__unsupported,
+.field__derived {
   margin: 0;
   display: flex;
   gap: 0.5rem;
   font-size: 0.85rem;
   color: #777;
+}
+.field__imageName {
+  font-size: 0.8rem;
+  color: #555;
 }
 .field__note {
   font-style: italic;

@@ -153,3 +153,87 @@ describe('保存するとインスタンスが増え、パートが生まれる�
     expect(app.find('.app__notice').text()).toContain('2 件')
   })
 })
+
+/**
+ * ⭐ フォームの `image` 欄（§1-3-3 の B 群）を、**App の配線を通して**確かめる。
+ *
+ * ⚠⚠ 実体（Blob）は `data` ではなく `TemplateInstance.images` へ入る（§1-4）。
+ *   経路が 1 本でも抜けると「選べたのに、リロードすると画像が無い」になる——
+ *   ⚠ しかも**その場では正しく見える**ので、実機で気づくのは翌日である。
+ *
+ * ⚠ 画像の入口は 2 つある（素材追加ボタン＝`addImage` ／ 定義に画像欄を持つテンプレ＝ここ）。
+ *   §1-7-2 の「入口は 1 本」は **`builtin.image` を一覧から外す**話であって、
+ *   利用者定義の画像欄を塞ぐ話ではない（CoC の顔写真がまさにこれ）。
+ */
+describe('フォームの画像欄から作った素材（利用者定義テンプレ・§1-3-3 B 群）', () => {
+  const PHOTO_DEF = {
+    id: 'test.character',
+    name: '登場人物',
+    version: '0.1.0',
+    fields: [
+      { key: 'name', type: 'string', label: '名前' },
+      { key: 'photo', type: 'image', label: '顔写真' },
+    ],
+    outputs: [{ kind: 'fixed', key: 'name', label: '名前', form: 'section' }],
+  } as const
+
+  it('⭐ 画像を選んで保存すると、実体が images 側に入り、リロードしても残る（完了条件 #7）', async () => {
+    const app = await mountApp()
+    const store = usePartStore()
+    // ⚠ 持ち込みの定義と同じ経路で登録する（画像欄は利用者定義でも作れる）
+    store.registerDefinition(JSON.parse(JSON.stringify(PHOTO_DEF)))
+    await flushPromises()
+
+    await app.findAll('.tpane__item').find((b) => b.text() === '登場人物')!.trigger('click')
+    await app.find('.field--string input').setValue('たんていA')
+
+    const input = app.find('.field--image input[type="file"]').element as HTMLInputElement
+    const file = new File([new Uint8Array([9, 8, 7])], 'かお.png', { type: 'image/png' })
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    input.dispatchEvent(new Event('change'))
+    await app.vm.$nextTick()
+
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    const saved = await loadInstances()
+    expect(saved).toHaveLength(1)
+    expect(saved[0]!.data.name).toBe('たんていA')
+    // ⚠⚠ `data` には入っていない（Blob が md・zip・保存の全経路へ紛れ込まない）
+    expect('photo' in saved[0]!.data).toBe(false)
+    // ⚠ 「Blob が在る」だけでは足りない。中身まで見る（空の Blob でも型は合う）。
+    const blob = saved[0]!.images.photo
+    expect(blob).toBeInstanceOf(Blob)
+    expect([...new Uint8Array(await blob!.arrayBuffer())]).toEqual([9, 8, 7])
+  })
+
+  it('画像を選ばなければ images は空のまま（否定形の述語）', async () => {
+    const app = await mountApp()
+    usePartStore().registerDefinition(JSON.parse(JSON.stringify(PHOTO_DEF)))
+    await flushPromises()
+
+    await app.findAll('.tpane__item').find((b) => b.text() === '登場人物')!.trigger('click')
+    await app.find('.field--string input').setValue('たんていB')
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    const saved = await loadInstances()
+    expect(saved[0]!.images).toEqual({})
+  })
+
+  it('⭐ 画像欄を持つ素材は「差し替え」も使える（既存の経路がそのまま効く）', async () => {
+    const app = await mountApp()
+    const store = usePartStore()
+    store.registerDefinition(JSON.parse(JSON.stringify(PHOTO_DEF)))
+    await flushPromises()
+
+    await app.findAll('.tpane__item').find((b) => b.text() === '登場人物')!.trigger('click')
+    await app.find('.field--string input').setValue('たんていC')
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    // ⚠ 判定は宣言（定義の `image` 欄）に聞いている＝新しい経路を足していないことの確認
+    const instanceId = Object.values(store.instances)[0]!.id
+    expect(store.imageFieldKeyOfInstance(instanceId)).toBe('photo')
+  })
+})

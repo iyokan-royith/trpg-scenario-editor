@@ -12,15 +12,18 @@ import {
   FIELD_TYPE_LABELS,
   ITEM_ID_KEY,
   SUPPORTED_FIELD_TYPES,
+  collectImages,
   createArrayItem,
   createDraft,
   isDraftDirty,
+  isNeverAskedFieldType,
   isSupportedFieldType,
   labelOf,
   newItemId,
   pruneEmpty,
   validateDraft,
 } from '../form'
+import { DIRECTIONS, DIRECTION_LABELS, childFieldsOf } from '../domain'
 
 /** 基本型 7 種＋未対応型を 1 つ混ぜた定義（この切れ目の全域）。 */
 const BASIC_FIELDS: FieldDef[] = [
@@ -44,8 +47,23 @@ const BASIC_FIELDS: FieldDef[] = [
       { key: 'weight', type: 'integer', label: '重さ' },
     ],
   },
-  { key: 'where', type: 'coordinate', label: '場所' },
+  // ⚠ この 2 つは「欄が出ない」型。**理由が別**なので両方を混ぜてある（§1-3-3）。
+  { key: 'guard', type: 'ref', label: '見張り' }, // まだ入力できない（判断待ち）
+  { key: 'trapCount', type: 'derived', label: 'トラップ数' }, // これからも尋ねない
 ]
+
+/** ドメイン型（この切れ目で足した A 群・B 群）。⚠ `edgeRef` は座標＋方向の合成。 */
+const DOMAIN_FIELDS: FieldDef[] = [
+  { key: 'at', type: 'coordinate', label: '位置' },
+  { key: 'facing', type: 'direction', label: '向き' },
+  { key: 'from', type: 'edgeRef', label: '始点' },
+  { key: 'photo', type: 'image', label: '顔写真' },
+]
+
+/** 座標の値を作る小道具（下書きの形をテスト側で手打ちしない）。 */
+function coordinate(row: string | '', column: number | null): Record<string, unknown> {
+  return { row, column }
+}
 
 describe('型の日本語名（§1-8-2c: 内部の値を画面に出さない）', () => {
   it('宣言されている型は全部、日本語名を持っている', () => {
@@ -56,7 +74,7 @@ describe('型の日本語名（§1-8-2c: 内部の値を画面に出さない）
     }
   })
 
-  it('この切れ目で入力できるのは基本型 7 種だけ', () => {
+  it('入力できるのは基本型 7 種＋ドメイン型 4 種（`ref` / `oneOf` はまだ・`derived` は尋ねない）', () => {
     expect([...SUPPORTED_FIELD_TYPES]).toEqual([
       'string',
       'integer',
@@ -65,9 +83,24 @@ describe('型の日本語名（§1-8-2c: 内部の値を画面に出さない）
       'enum',
       'array',
       'object',
+      'coordinate',
+      'direction',
+      'edgeRef',
+      'image',
     ])
+    // ⏸ 判断待ちの 2 種（§1-3-3a）。⚠ ここが true に倒れたら、入力欄の無い型が
+    //   「入力できる」と言われて**画面に何も出ないまま黙って通る**。
+    expect(isSupportedFieldType('ref')).toBe(false)
     expect(isSupportedFieldType('oneOf')).toBe(false)
-    expect(isSupportedFieldType('coordinate')).toBe(false)
+  })
+
+  it('⭐ `derived` は「まだ」ではなく「これからも尋ねない」——2 つの集合を混ぜない（§1-3-3）', () => {
+    expect(isNeverAskedFieldType('derived')).toBe(true)
+    // ⚠⚠ 入力できる型に混ぜない（混ぜると入力欄を探しに行く）
+    expect(isSupportedFieldType('derived')).toBe(false)
+    // ⚠⚠ かつ「まだ入力できません」の集合とも別（＝否定で表さない）。
+    //   ここが false になると、`derived` が未対応型と同じ文言で出る。
+    for (const type of ['ref', 'oneOf'] as const) expect(isNeverAskedFieldType(type)).toBe(false)
   })
 
   it('表示名が無ければ key を出す（黙って空欄にしない）', () => {
@@ -90,7 +123,31 @@ describe('下書きの初期値', () => {
     })
     // 入力できないものの空値を作らない（作ると「入力していないのに値がある」データになる）
     expect(ITEM_ID_KEY in draft).toBe(false)
-    expect('where' in draft).toBe(false)
+    expect('guard' in draft).toBe(false)
+    // ⚠ 尋ねない型も同じ（導出値をデータ側に持たせない・P0 知見 1）
+    expect('trapCount' in draft).toBe(false)
+  })
+
+  it('⭐ ドメイン型の空値——座標は行と列、辺参照は座標と方向の入れ物になる（合成）', () => {
+    expect(createDraft(DOMAIN_FIELDS)).toEqual({
+      at: { row: '', column: null },
+      facing: '',
+      from: { at: { row: '', column: null }, facing: '' },
+      photo: null,
+    })
+  })
+
+  it('⭐⭐ 合成型の子は**型が決める**——定義が `fields` を書いても入れ替わらない', () => {
+    // ⚠⚠ ここが `field.fields ?? COMPOSITE` の順だと、持ち込みの定義で
+    //   行と列が黙って別の構造に置き換わり、保存形が型の契約から外れる（P4 で図が描けない）。
+    const hijacked: FieldDef = {
+      key: 'at',
+      type: 'coordinate',
+      label: '位置',
+      fields: [{ key: 'x', type: 'string', label: 'よこ' }],
+    }
+    expect(childFieldsOf(hijacked).map((f) => f.key)).toEqual(['row', 'column'])
+    expect(createDraft([hijacked])).toEqual({ at: { row: '', column: null } })
   })
 })
 
@@ -266,5 +323,218 @@ describe('未保存の印（§1-9-2）', () => {
     expect(isDraftDirty(BASIC_FIELDS, draft)).toBe(false)
     ;(draft.nest as Record<string, unknown>).inner = 'おくのもの'
     expect(isDraftDirty(BASIC_FIELDS, draft)).toBe(true)
+  })
+})
+
+/**
+ * ドメイン型の A 群（`coordinate` / `direction` / `edgeRef`）と B 群（`image`）。
+ *
+ * ⚠⚠ **3 つの述語（`validateDraft` / `isDraftDirty` / `pruneEmpty`）を型ごとに別々に見る。**
+ *   1 つでも抜けると「印が点かない」「空欄が保存される」「検証を素通りする」のどれかが
+ *   **緑のまま**起きる（どれも画面には出ない壊れ方をする）。
+ */
+describe('方向の語彙（§1-8-2c: 内部の値を画面に出さない）', () => {
+  it('8 方向あり、全部に日本語名がある（斜めを含む）', () => {
+    expect(DIRECTIONS).toHaveLength(8)
+    for (const direction of DIRECTIONS) {
+      expect(DIRECTION_LABELS[direction]).toBeTruthy()
+      expect(DIRECTION_LABELS[direction]).not.toBe(direction)
+    }
+    // ⚠ 斜めが落ちていないこと（4 方向だけ実装した、を検出する）
+    expect(Object.values(DIRECTION_LABELS)).toEqual(
+      expect.arrayContaining(['右上', '右下', '左下', '左上']),
+    )
+  })
+})
+
+describe('ドメイン型を保存する（pruneEmpty）', () => {
+  it('⭐ 空のドメイン欄は 1 つも書かない（否定形の述語）', () => {
+    const data = pruneEmpty(DOMAIN_FIELDS, createDraft(DOMAIN_FIELDS))
+    expect(data).toEqual({})
+  })
+
+  it('揃った座標は行と列のまま書く（`A2` のような文字列に潰さない）', () => {
+    const data = pruneEmpty(DOMAIN_FIELDS, {
+      ...createDraft(DOMAIN_FIELDS),
+      at: coordinate('A', 2),
+    })
+    // ⚠⚠ 文字列に潰すと P4 で図が描けない（§1-3 の `ref` と同じ理由）。
+    expect(data.at).toEqual({ row: 'A', column: 2 })
+  })
+
+  it('方向は内部値（英語）で書く。空は書かない', () => {
+    const data = pruneEmpty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), facing: 'downRight' })
+    expect(data.facing).toBe('downRight')
+    expect('facing' in pruneEmpty(DOMAIN_FIELDS, createDraft(DOMAIN_FIELDS))).toBe(false)
+  })
+
+  it('辺参照は座標と方向の入れ子のまま書く（合成が保存形にも出る）', () => {
+    const data = pruneEmpty(DOMAIN_FIELDS, {
+      ...createDraft(DOMAIN_FIELDS),
+      from: { at: coordinate('C', 1), facing: 'down' },
+    })
+    expect(data.from).toEqual({ at: { row: 'C', column: 1 }, facing: 'down' })
+  })
+
+  it('⭐⭐ 画像の実体は `data` に**絶対に**書かない（実体は images 側・§1-4）', () => {
+    const blob = new Blob(['x'], { type: 'image/png' })
+    const data = pruneEmpty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), photo: blob })
+    expect('photo' in data).toBe(false)
+    // ⚠ どこにも紛れていないこと（入れ子に押し込まれていない）
+    expect(JSON.stringify(data)).not.toContain('photo')
+  })
+
+  it('⚠ 半分だけの座標は「書かれる」——`pruneEmpty` は検証をしない（責務の線）', () => {
+    // ⚠⚠ これは欠陥ではなく**分担**である。保存経路では `validateDraft()` が先に立ち、
+    //   半分だけの座標はそこで止まる（下の describe で固定している）。
+    //   ここを「揃っていなければ落とす」に変えると、打った値が黙って消える側の壊れ方になる。
+    const data = pruneEmpty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), at: coordinate('A', null) })
+    expect(data.at).toEqual({ row: 'A' })
+    expect(validateDraft(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), at: coordinate('A', null) })).
+      toHaveLength(1)
+  })
+})
+
+describe('ドメイン型の未保存の印（isDraftDirty）', () => {
+  it('⭐ 空のドメイン下書きは打ちかけではない（否定形の述語）', () => {
+    expect(isDraftDirty(DOMAIN_FIELDS, createDraft(DOMAIN_FIELDS))).toBe(false)
+  })
+
+  it('行だけ選んでも打ちかけ（半分の入力を印の無いまま消さない）', () => {
+    expect(
+      isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), at: coordinate('B', null) }),
+    ).toBe(true)
+    expect(
+      isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), at: coordinate('', 3) }),
+    ).toBe(true)
+  })
+
+  it('方向を選ぶと打ちかけになる', () => {
+    expect(isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), facing: 'up' })).toBe(true)
+  })
+
+  it('⭐ 辺参照の奥（座標の行）に打った値も見つかる（合成が 2 段目で切れていない）', () => {
+    expect(
+      isDraftDirty(DOMAIN_FIELDS, {
+        ...createDraft(DOMAIN_FIELDS),
+        from: { at: coordinate('D', null), facing: '' },
+      }),
+    ).toBe(true)
+  })
+
+  it('画像は 1 枚選んだ時点で打ちかけ。外すと戻る', () => {
+    const blob = new Blob(['x'], { type: 'image/png' })
+    expect(isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), photo: blob })).toBe(true)
+    expect(isDraftDirty(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), photo: null })).toBe(false)
+  })
+})
+
+describe('ドメイン型の検証（validateDraft）', () => {
+  const draftWith = (patch: Record<string, unknown>) => ({ ...createDraft(DOMAIN_FIELDS), ...patch })
+
+  it('空も、揃っているものも通る（弾きすぎていないことの陽性対照）', () => {
+    expect(validateDraft(DOMAIN_FIELDS, createDraft(DOMAIN_FIELDS))).toEqual([])
+    expect(
+      validateDraft(
+        DOMAIN_FIELDS,
+        draftWith({
+          at: coordinate('Z', 26),
+          facing: 'upLeft',
+          from: { at: coordinate('A', 1), facing: 'left' },
+        }),
+      ),
+    ).toEqual([])
+  })
+
+  it('⭐ 半分だけの座標は保存の手前で止まる（行だけ・列だけ）', () => {
+    for (const half of [coordinate('A', null), coordinate('', 2)]) {
+      const errors = validateDraft(DOMAIN_FIELDS, draftWith({ at: half }))
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain('位置') // label（`at` ではない）
+      expect(errors[0]).toContain('行と列')
+      expect(errors[0]).not.toContain('at')
+    }
+  })
+
+  it('行が A〜Z の外・列が 1 未満なら知らせる', () => {
+    const outOfRow = validateDraft(DOMAIN_FIELDS, draftWith({ at: coordinate('あ', 1) }))
+    expect(outOfRow).toHaveLength(1)
+    expect(outOfRow[0]).toContain('A〜Z')
+
+    const zero = validateDraft(DOMAIN_FIELDS, draftWith({ at: coordinate('A', 0) }))
+    expect(zero).toHaveLength(1)
+    expect(zero[0]).toContain('1 以上')
+  })
+
+  it('⚠ 列の小数は「整数で」と 1 行だけ出る（合成の子と親で二重に言わない）', () => {
+    const errors = validateDraft(DOMAIN_FIELDS, draftWith({ at: coordinate('A', 1.5) }))
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('整数')
+    expect(errors[0]).toContain('列') // 子の label まで言う
+  })
+
+  it('知らない向き（画面の選択肢から出ない値）は弾く', () => {
+    const errors = validateDraft(DOMAIN_FIELDS, draftWith({ facing: 'northeast' }))
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('向き')
+    expect(errors[0]).not.toContain('northeast')
+  })
+
+  it('⭐ 座標だけ・方向だけの辺参照は弾く（辺を指せない＝P4 で線が引けない）', () => {
+    const onlyAt = validateDraft(DOMAIN_FIELDS, draftWith({ from: { at: coordinate('A', 1), facing: '' } }))
+    expect(onlyAt).toHaveLength(1)
+    expect(onlyAt[0]).toContain('始点')
+    expect(onlyAt[0]).toContain('座標と方向')
+
+    const onlyFacing = validateDraft(
+      DOMAIN_FIELDS,
+      draftWith({ from: { at: coordinate('', null), facing: 'up' } }),
+    )
+    expect(onlyFacing).toHaveLength(1)
+    expect(onlyFacing[0]).toContain('座標と方向')
+  })
+
+  it('画像の欄に画像でないものが入っていたら保存の手前で止める', () => {
+    const errors = validateDraft(DOMAIN_FIELDS, draftWith({ photo: 'ファイル名っぽい文字列' }))
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('顔写真')
+  })
+
+  it('⭐ 配列の中の座標も「何件目か」まで言う（再帰が切れていない）', () => {
+    const fields: FieldDef[] = [
+      { key: 'rooms', type: 'array', label: '部屋', fields: [{ key: 'at', type: 'coordinate', label: '位置' }] },
+    ]
+    const ng = createArrayItem(fields[0]!.fields!)
+    ng.at = coordinate('A', null)
+    const errors = validateDraft(fields, { rooms: [createArrayItem(fields[0]!.fields!), ng] })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('部屋 2 件目')
+    expect(errors[0]).toContain('位置')
+  })
+})
+
+describe('画像の実体を取り出す（collectImages）', () => {
+  const blob = () => new Blob(['x'], { type: 'image/png' })
+
+  it('定義の `image` 欄から、選ばれた実体をキー付きで取り出す', () => {
+    const file = blob()
+    const images = collectImages(DOMAIN_FIELDS, { ...createDraft(DOMAIN_FIELDS), photo: file })
+    expect(images).toEqual({ photo: file })
+  })
+
+  it('⭐ 選んでいなければ空。画像欄の無い定義でも空（否定形の述語）', () => {
+    expect(collectImages(DOMAIN_FIELDS, createDraft(DOMAIN_FIELDS))).toEqual({})
+    expect(collectImages(BASIC_FIELDS, createDraft(BASIC_FIELDS))).toEqual({})
+  })
+
+  it('⭐⭐ **値ではなく定義から歩く**——宣言の無いキーに Blob が居ても拾わない', () => {
+    // ⚠ 「下書きの中の Blob を拾う」実装だと、入れ子や配列に紛れた Blob を偶然拾う。
+    //   `imageFieldKeyOf()` / `replaceImage()` と同じく**宣言に聞く**のが線。
+    const images = collectImages(DOMAIN_FIELDS, {
+      ...createDraft(DOMAIN_FIELDS),
+      まぎれこみ: blob(),
+      nest: { inner: blob() },
+    })
+    expect(images).toEqual({})
   })
 })

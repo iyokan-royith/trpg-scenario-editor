@@ -6,8 +6,9 @@
  *   → 見つけた問題は**全部集めてから**返す（最初の 1 件で止めると、直しては読ませ直す往復になる）。
  *   → メッセージには必ず **出所**（どのファイルか）と **場所**（`fields[1].型` のような道順）を入れる。
  */
-import { FIELD_TYPES, type FieldDef, type TemplateDefinition } from './model'
+import { FIELD_TYPES, type FieldDef, type FieldType, type TemplateDefinition } from './model'
 import { ITEM_ID_KEY } from './form'
+import { isCompositeFieldType } from './domain'
 import type { OutputDef } from './outputs'
 import { builtinPatternNames } from './render'
 
@@ -48,7 +49,13 @@ function checkString(
  * @param prefix 親からの道順（`fields` / `fields[3].fields`）。**入れ子でも「どこが」を言えるようにする。**
  * @param inArrayItem 配列の**要素**の定義かどうか（`id` が予約されるのはここだけ）
  */
-function checkFields(value: unknown, problems: string[], prefix = 'fields', inArrayItem = false): void {
+function checkFields(
+  value: unknown,
+  problems: string[],
+  prefix = 'fields',
+  inArrayItem = false,
+  nested = false,
+): void {
   if (!Array.isArray(value)) {
     problems.push(`${prefix} が配列ではありません（${JSON.stringify(value)}）`)
     return
@@ -84,6 +91,25 @@ function checkFields(value: unknown, problems: string[], prefix = 'fields', inAr
         choices.forEach((choice, j) => checkString(choice, `${path}.choices[${j}]`, problems))
       }
     }
+    // ⚠⚠ **合成型（座標・辺参照）の子の形は型が決めている**（`template/domain.ts`）。
+    //   宣言を黙って無視すると、書いた人は「行と列を別の形にした」つもりのまま
+    //   保存形だけが型の契約どおりになる。→ 無視せず、書いた人に言う。
+    if (typeof field.type === 'string' && isCompositeFieldType(field.type as FieldType)) {
+      if ('fields' in field) {
+        problems.push(
+          `${path}.fields は書けません（${field.type} の中身は型が決めています。行と列・座標と方向は宣言しません）`,
+        )
+      }
+    }
+    // ⚠⚠ **画像の実体は `TemplateInstance.images` にフィールド名 1 段のキーで入る**（§1-4）。
+    //   入れ子・配列の中に置くとキーを表せず、**選んだ画像が黙って落ちる**。
+    //   → 落とすのではなく、読み込みの入口で断る。
+    //   要検証[入れ子の中に画像欄を置きたい実データが出てきたら、images のキーをパス化する設計へ広げる]
+    if (field.type === 'image' && nested) {
+      problems.push(
+        `${path} に image は置けません（画像の欄は入れ子・配列の中には作れません。いちばん外側に置いてください）`,
+      )
+    }
     if (field.type === 'object' || field.type === 'array') {
       const children = field.fields
       if (!Array.isArray(children) || children.length === 0) {
@@ -94,7 +120,7 @@ function checkFields(value: unknown, problems: string[], prefix = 'fields', inAr
         )
         return
       }
-      checkFields(children, problems, `${path}.fields`, field.type === 'array')
+      checkFields(children, problems, `${path}.fields`, field.type === 'array', true)
     }
   })
 }
