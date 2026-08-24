@@ -1,12 +1,88 @@
 {
   "id": "builtin.dungeon-map",
   "name": "迷宮マップ",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "fields": [
-    { "key": "overview", "type": "object" },
-    { "key": "entrances", "type": "array" },
-    { "key": "corridors", "type": "array" },
-    { "key": "rooms", "type": "array" }
+    {
+      "key": "overview",
+      "type": "object",
+      "label": "全体",
+      "fields": [
+        { "key": "name", "type": "string", "label": "マップ名" },
+        { "key": "level", "type": "integer", "label": "レベル" },
+        { "key": "playerCount", "type": "integer", "label": "プレイヤー数" },
+        {
+          "key": "size",
+          "type": "object",
+          "label": "サイズ",
+          "fields": [
+            { "key": "width", "type": "integer", "label": "幅" },
+            { "key": "height", "type": "integer", "label": "高さ" }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "entrances",
+      "type": "array",
+      "label": "入口",
+      "fields": [
+        { "key": "at", "type": "coordinate", "label": "位置" },
+        { "key": "facing", "type": "direction", "label": "向き" }
+      ]
+    },
+    {
+      "key": "corridors",
+      "type": "array",
+      "label": "道",
+      "fields": [
+        { "key": "from", "type": "edgeRef", "label": "始点" },
+        { "key": "to", "type": "edgeRef", "label": "終点" },
+        { "key": "trap", "type": "oneOf", "label": "罠" }
+      ]
+    },
+    {
+      "key": "rooms",
+      "type": "array",
+      "label": "部屋",
+      "fields": [
+        { "key": "at", "type": "coordinate", "label": "位置" },
+        { "key": "name", "type": "string", "label": "名前" },
+        { "key": "encounter", "type": "oneOf", "label": "遭遇" },
+        {
+          "key": "traps",
+          "type": "array",
+          "label": "トラップ",
+          "fields": [
+            {
+              "key": "name",
+              "type": "enum",
+              "label": "名前",
+              "choices": [
+                "坂道",
+                "幻の路",
+                "シークレットドア",
+                "温泉",
+                "ものかげ",
+                "パスワード",
+                "自動販売機"
+              ]
+            },
+            { "key": "target", "type": "ref", "label": "対象" }
+          ]
+        },
+        {
+          "key": "roomStats",
+          "type": "object",
+          "label": "部屋データ",
+          "fields": [
+            { "key": "trapCount", "type": "derived", "label": "トラップ数" },
+            { "key": "enemyCount", "type": "derived", "label": "エネミー数" }
+          ]
+        },
+        { "key": "description", "type": "text", "label": "描写" }
+      ]
+    }
   ],
   "outputs": [{ "pattern": "builtin:dungeon-map" }]
 }

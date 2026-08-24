@@ -9,6 +9,7 @@ import { restoreHeadingMarksInJson } from './document/heading'
 import { documentSchema } from './document/schema'
 import OutlinePane from './ui/OutlinePane.vue'
 import MaterialPane from './ui/MaterialPane.vue'
+import TemplatePane from './ui/TemplatePane.vue'
 import { usePartStore } from './store/partStore'
 import {
   createAutoSaver,
@@ -320,6 +321,27 @@ function countPlaced(part: Part): number {
     .length
 }
 
+/** テンプレート一覧に並べる定義。⚠ 同梱と持ち込みを区別しない（Q6）。 */
+const templateList = computed(() => Object.values(store.definitions))
+
+/**
+ * テンプレのフォームから素材を 1 件作る（P2 完了条件 #2〜#4）。
+ * ⚠ **パートは作らない。** データを足すだけで、パートは `derivePartsOf()` が導出する
+ *   （P0 知見 1: 導出したものをデータ側に持たせない）。
+ */
+async function onCreateFromTemplate(templateId: string, data: Record<string, unknown>) {
+  const instance = store.createInstance(templateId, data)
+  try {
+    await saveInstance(instance)
+    const born = store.partsOfInstance(instance.id).length
+    notice.value = `素材を作りました（パートが ${born} 件生まれました）`
+  } catch (error) {
+    notice.value = `素材を保存できませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
+}
+
 function exportMd() {
   const doc = editor.value?.state.doc
   if (!doc) return
@@ -366,15 +388,24 @@ function importMd() {
       <main class="app__editor">
         <EditorContent v-if="editor" :editor="editor" />
       </main>
-      <MaterialPane
-        class="app__materials"
-        :parts="store.parts"
-        :unplacedKeys="unplacedKeys"
-        @addImage="onAddImage"
-        @insert="onInsertMaterial"
-        @replace="onReplaceMaterial"
-        @remove="onRemoveMaterial"
-      />
+      <!-- ⚠ 右の列は 2 段。上が「何を作れるか」（定義）・下が「何が置けるか」（パート）。
+           1-7-1 のとおり層が違うので混ぜない。 -->
+      <div class="app__right">
+        <TemplatePane
+          class="app__templates"
+          :definitions="templateList"
+          @create="onCreateFromTemplate"
+        />
+        <MaterialPane
+          class="app__materials"
+          :parts="store.parts"
+          :unplacedKeys="unplacedKeys"
+          @addImage="onAddImage"
+          @insert="onInsertMaterial"
+          @replace="onReplaceMaterial"
+          @remove="onRemoveMaterial"
+        />
+      </div>
     </div>
     <!-- ⚠ 見えない口。「素材を追加」のボタンから開く（1-7-2: テンプレートの存在は見せない） -->
     <input
@@ -425,9 +456,21 @@ function importMd() {
   width: 16rem;
   border-right: 1px solid #ddd;
 }
-.app__materials {
+.app__right {
+  display: flex;
+  flex-direction: column;
   width: 18rem;
+  min-height: 0;
   border-left: 1px solid #ddd;
+}
+.app__templates {
+  flex: 0 1 auto;
+  max-height: 45%;
+  border-bottom: 1px solid #ddd;
+}
+.app__materials {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .app__file {
   display: none;

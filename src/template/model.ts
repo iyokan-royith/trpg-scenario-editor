@@ -14,8 +14,10 @@ export type PartForm = 'section' | 'inline' | 'figure'
 
 /**
  * フォームに出る入力欄の型（1-3 の表）。
- * ⚠ v0 で**フォームまで実装済み**なのはスカラー（`string` / `image`）だけ。
- *   残りは型として宣言されているが、入力 UI は後続フェーズの責務。
+ * ⚠ v0 で**フォームまで実装済み**なのは基本型 7 種
+ *   （`string` / `integer` / `boolean` / `text` / `enum` / `array` / `object`）だけ。
+ *   残る 7 種（ドメイン型）は型としては宣言でき、`outputs` からも読めるが、
+ *   **入力 UI は後続の切れ目の責務**（`template/form.ts` の `SUPPORTED_FIELD_TYPES` が単一の真実）。
  */
 export const FIELD_TYPES = [
   'string',
@@ -39,6 +41,25 @@ export type FieldType = (typeof FIELD_TYPES)[number]
 export interface FieldDef {
   key: string
   type: FieldType
+  /**
+   * フォームに出す表示名。⚠ **値であって識別子ではない**ので日本語でよい（§1-8-1 の表の最終行）。
+   * 省略時は `key` をそのまま出す（英語が出るが、黙って空になるよりはよい）。
+   */
+  label?: string
+  /**
+   * `enum` の選択肢。⚠ **値なので日本語**（`友好` / `敵対` / `坂道` …）。
+   * 判別子は英語・列挙値は日本語、の線引きは §1-8-2 の注記どおり。
+   */
+  choices?: string[]
+  /**
+   * `object` の子フィールド／`array` の**要素**の形。
+   *
+   * ⚠ **`array` は「オブジェクトの配列」に限る。** 実物（`spike/sample/map.yaml` 由来のサンプル）の
+   *   配列は `entrances` / `corridors` / `rooms` / `traps` / `enemies` まですべて要素がオブジェクトで、
+   *   スカラーの配列は 1 つも無い。**要素に安定した `id` を持たせる必要がある**（P0 知見 2）ことからも、
+   *   要素はオブジェクトでなければならない——スカラーには `id` を付ける場所が無い。
+   */
+  fields?: FieldDef[]
 }
 
 export interface TemplateDefinition {

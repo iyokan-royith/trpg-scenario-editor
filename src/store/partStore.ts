@@ -78,6 +78,22 @@ export const usePartStore = defineStore('parts', () => {
   }
 
   /**
+   * テンプレのフォームから作られたインスタンスを 1 件足す（P2 完了条件 #4）。
+   * ⚠ **保存はしない**（`addImage` と同じ線。呼び手が `saveInstance()` へ渡す）。
+   */
+  function createInstance(templateId: string, data: Record<string, unknown>): TemplateInstance {
+    const instance: TemplateInstance = {
+      id: newId('instance'),
+      templateId,
+      data,
+      // ⚠ 画像の実体はフォームからは入らない（`image` 型は入力 UI が未対応）。
+      images: {},
+    }
+    upsertInstance(instance)
+    return instance
+  }
+
+  /**
    * 画像を 1 枚追加する。
    * ⚠ **UI にテンプレートであることを見せないだけで、内部では普通のインスタンス 1 件**（1-7-2）。
    */
@@ -116,6 +132,7 @@ export const usePartStore = defineStore('parts', () => {
     upsertInstance,
     removeInstance,
     registerBundledTemplates,
+    createInstance,
     addImage,
     replaceImage,
   }

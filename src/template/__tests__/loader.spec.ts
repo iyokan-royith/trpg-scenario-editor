@@ -217,4 +217,87 @@ describe('日本語キーの正規化（NFC）', () => {
     // ⚠ 値（表示名）は触らない。触ると利用者が書いたとおりに出ない場所ができる
     expect((normalizeKeysToNfc(before) as { label: string }).label).toBe(`${NFD}めん`)
   })
+
+  /**
+   * ⭐ 入れ子のフィールド宣言（P2・`array` / `object` / `enum`）。
+   * ⚠ 「無いと入力欄が作れないもの」を**テンプレを書いた人**に返す（使う人が空欄を掴まない）。
+   */
+  describe('入れ子のフィールド宣言（P2 完了条件 #2・#3 の前提）', () => {
+    function defWith(fields: unknown): string {
+      return JSON.stringify({
+        id: 'ため.し',
+        name: 'ためし',
+        version: '0.1.0',
+        fields,
+        outputs: [{ pattern: IMAGE_PATTERN }],
+      })
+    }
+
+    it('enum に choices が無いと、どこが悪いか分かるエラーになる', () => {
+      const error = readAndFail(defWith([{ key: 'mood', type: 'enum' }]), 'ためし.json')
+      expect(error.message).toContain('fields[0].choices')
+      expect(error.message).toContain('選択肢')
+    })
+
+    it('array / object に fields が無いと、どこが悪いか分かるエラーになる', () => {
+      const error = readAndFail(
+        defWith([
+          { key: 'rooms', type: 'array' },
+          { key: 'overview', type: 'object' },
+        ]),
+        'ためし.json',
+      )
+      expect(error.problems).toHaveLength(2)
+      expect(error.message).toContain('fields[0].fields')
+      expect(error.message).toContain('fields[1].fields')
+    })
+
+    it('入れ子の中の誤りも「道順つき」で出る（どの段の話か分かる）', () => {
+      const error = readAndFail(
+        defWith([
+          {
+            key: 'rooms',
+            type: 'array',
+            fields: [{ key: 'name', type: '文字れつ' }],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('fields[0].fields[0].type')
+    })
+
+    it('⭐ 配列の要素に id という名前は使えない（採番した識別子と衝突する・P0 知見 2）', () => {
+      const error = readAndFail(
+        defWith([{ key: 'rooms', type: 'array', fields: [{ key: 'id', type: 'string' }] }]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('fields[0].fields[0].key')
+      expect(error.message).toContain('予約')
+      // ⚠ 予約は**配列の要素**だけ。入れ子（object）の中の id は普通のキーとして許す
+      const ok = readTemplateDefinition(
+        defWith([{ key: 'overview', type: 'object', fields: [{ key: 'id', type: 'string' }] }]),
+        'ためし.json',
+      )
+      expect(ok.fields[0]!.fields![0]!.key).toBe('id')
+    })
+
+    it('入れ子のキーも NFC へ揃う（§1-8-4 規約①の範囲は入れ子にも及ぶ）', () => {
+      const def = readTemplateDefinition(
+        defWith([
+          { key: 'rooms', type: 'array', fields: [{ key: `${NFD}ぞう`, type: 'string' }] },
+        ]),
+        'ためし.json',
+      )
+      expect(def.fields[0]!.fields![0]!.key).toBe(`${NFC}ぞう`)
+    })
+
+    it('同梱の迷宮マップ定義は、この検証を通っている', () => {
+      const def = readBundledTemplates().find((d) => d.id === 'builtin.dungeon-map')!
+      const rooms = def.fields.find((f) => f.key === 'rooms')!
+      expect(rooms.type).toBe('array')
+      expect(rooms.fields!.map((f) => f.key)).toContain('traps')
+      // ⚠ ドメイン型（この切れ目では入力できないもの）を実際に含んでいる＝完了条件 #6 の検証体
+      expect(rooms.fields!.map((f) => f.type)).toContain('coordinate')
+    })
+  })
 })

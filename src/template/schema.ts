@@ -7,6 +7,7 @@
  *   → メッセージには必ず **出所**（どのファイルか）と **場所**（`fields[1].型` のような道順）を入れる。
  */
 import { FIELD_TYPES, type FieldDef, type TemplateDefinition } from './model'
+import { ITEM_ID_KEY } from './form'
 import type { OutputDef } from './outputs'
 import { builtinPatternNames } from './render'
 
@@ -43,14 +44,18 @@ function checkString(
   }
 }
 
-function checkFields(value: unknown, problems: string[]): void {
+/**
+ * @param prefix 親からの道順（`fields` / `fields[3].fields`）。**入れ子でも「どこが」を言えるようにする。**
+ * @param inArrayItem 配列の**要素**の定義かどうか（`id` が予約されるのはここだけ）
+ */
+function checkFields(value: unknown, problems: string[], prefix = 'fields', inArrayItem = false): void {
   if (!Array.isArray(value)) {
-    problems.push(`fields が配列ではありません（${JSON.stringify(value)}）`)
+    problems.push(`${prefix} が配列ではありません（${JSON.stringify(value)}）`)
     return
   }
   const seenKeys = new Set<string>()
   value.forEach((field, i) => {
-    const path = `fields[${i}]`
+    const path = `${prefix}[${i}]`
     if (!isPlainObject(field)) {
       problems.push(`${path} がオブジェクトではありません（${JSON.stringify(field)}）`)
       return
@@ -61,6 +66,35 @@ function checkFields(value: unknown, problems: string[]): void {
       // ⚠ キーの重複は「値が黙って上書きされる」形で効くので、型の誤りと同じ重さで拾う。
       if (seenKeys.has(field.key)) problems.push(`${path}.key が重複しています（「${field.key}」）`)
       seenKeys.add(field.key)
+      // ⚠⚠ 配列要素の `id` は採番したものが入る予約語（P0 知見 2）。
+      //   宣言を許すと入力値が id を上書きし、**要素を 1 件消すと後ろ全部の配置がずれる**。
+      if (inArrayItem && field.key === ITEM_ID_KEY) {
+        problems.push(
+          `${path}.key に「${ITEM_ID_KEY}」は使えません（配列の要素を見分けるために予約されています）`,
+        )
+      }
+    }
+    // ⚠ 型ごとに「無いと入力欄が作れないもの」を見る。
+    //   黙って空のフォームを出すと、テンプレを書いた人ではなく**使う人**が原因不明の空欄を掴む。
+    if (field.type === 'enum') {
+      const choices = field.choices
+      if (!Array.isArray(choices) || choices.length === 0) {
+        problems.push(`${path}.choices がありません（enum は選択肢の一覧が要ります）`)
+      } else {
+        choices.forEach((choice, j) => checkString(choice, `${path}.choices[${j}]`, problems))
+      }
+    }
+    if (field.type === 'object' || field.type === 'array') {
+      const children = field.fields
+      if (!Array.isArray(children) || children.length === 0) {
+        problems.push(
+          field.type === 'array'
+            ? `${path}.fields がありません（array は要素 1 件の形を宣言する必要があります）`
+            : `${path}.fields がありません（object は子フィールドの宣言が要ります）`,
+        )
+        return
+      }
+      checkFields(children, problems, `${path}.fields`, field.type === 'array')
     }
   })
 }
