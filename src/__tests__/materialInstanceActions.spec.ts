@@ -15,17 +15,61 @@ import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import type { Editor } from '@tiptap/vue-3'
 import App from '../App.vue'
+import { collectPlacedRefs } from '../document/partRefExtension'
 import { usePartStore } from '../store/partStore'
 import { clearDocument, clearInstances, loadInstances } from '../store/persistence'
 import { IMAGE_KEY } from '../template/render/image'
 
 let wrapper: VueWrapper | null = null
 
+/**
+ * ⚠⚠ **エディタが立ち上がるまで待つ。`flushPromises()` 1 周では足りない。**
+ *
+ *   `App` の `onMounted` は `loadInstances()` → `loadDocument()` と
+ *   **IndexedDB のイベント（マクロタスク）を 2 段またいで**からエディタを作る。
+ *   待たずに「本文へ挿入」を押すと `onInsertMaterial` が `if (!ed) return` で
+ *   **黙って何もせずに終わる**——押した側からは成功と区別が付かず、
+ *   ずっと後の「本文に 2 箇所」の assert が落ちて初めて分かる（＝**原因から遠い所に出る**）。
+ *
+ * ⚠ これが最初の実装で 10 回に 1〜2 回ほど赤くなっていた真因。
+ *   ⚠ **時間で待たない**（遅い機械で破れる）。**条件が満たされるまで回す。**
+ */
 async function mountApp() {
   wrapper = mount(App, { attachTo: document.body })
+  for (let i = 0; i < 50; i += 1) {
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    if (editorOrNull()) return wrapper
+  }
+  // ⚠ 黙って先へ進まない。立ち上がらなかったこと自体が不具合である。
+  throw new Error('エディタが立ち上がりませんでした')
+}
+
+function editorOrNull(): Editor | null {
+  return (wrapper!.vm as unknown as { editor: Editor | null }).editor
+}
+
+function editorOf(): Editor {
+  const editor = editorOrNull()
+  if (!editor) throw new Error('エディタが立ち上がっていません')
+  return editor
+}
+
+/**
+ * 「本文へ挿入」を押して、**本文に届いたことまで確かめる**。
+ * ⚠ 押しただけでは届いたか分からない（上記のとおり黙って何もしない経路がある）。
+ *   ここで数えておくと、届かなかったときに**押した場所で**落ちる。
+ */
+async function insertFromRow(index: number) {
+  const before = collectPlacedRefs(editorOf().state.doc).length
+  await buttonIn(index, '本文へ挿入')!.trigger('click')
   await flushPromises()
-  return wrapper
+  const after = collectPlacedRefs(editorOf().state.doc).length
+  if (after !== before + 1) {
+    throw new Error(`挿入が本文へ届いていません（参照 ${before} → ${after}）`)
+  }
 }
 
 function rows() {
@@ -102,9 +146,8 @@ describe('複数パートの素材で「消す」が嘘をつかない（S7-2）
     const store = usePartStore()
 
     // 部屋のパート 1 件と、図のパート 1 件を本文へ置く（＝異なるパートが 2 箇所）
-    await buttonIn(1, '本文へ挿入')!.trigger('click')
-    await buttonIn(3, '本文へ挿入')!.trigger('click')
-    await flushPromises()
+    await insertFromRow(1)
+    await insertFromRow(3)
 
     await buttonIn(0, '素材ごと消す')!.trigger('click')
     await flushPromises()
@@ -132,8 +175,7 @@ describe('複数パートの素材で「消す」が嘘をつかない（S7-2）
     await createDungeonWithTwoRooms('ためしの迷宮')
 
     // 先頭のパートだけを本文へ置く → 「未配置だけ」で先頭の行が消える
-    await buttonIn(0, '本文へ挿入')!.trigger('click')
-    await flushPromises()
+    await insertFromRow(0)
     await wrapper!.find('.materials__filter input').setValue(true)
 
     expect(rows()).toHaveLength(3)
