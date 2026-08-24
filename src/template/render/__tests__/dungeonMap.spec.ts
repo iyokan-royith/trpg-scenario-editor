@@ -194,7 +194,9 @@ describe('原本に無い値を作っていない（データの検算）', () =
   })
 
   it('導出値は 4 点セットで、v0 では computed が null（1-3・S1）。B3 は通常値', () => {
+    // ⚠ `id` を型に書き忘れると `npm run build` の type-check だけが赤くなる（vitest は素通りする）。
     const rooms = readMayoiParkSample().data.rooms as {
+      id: string
       roomStats?: Record<string, unknown>
     }[]
     const stats = rooms.find((r) => r.id === 'room-2')?.roomStats
