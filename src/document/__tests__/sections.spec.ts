@@ -20,9 +20,12 @@ import {
   moveSection,
   sectionRangeAt,
   setSectionLevel,
+  setPartRefDepth,
+  canChangeLevel,
   topLevelBoundaries,
 } from '../sections'
 import { flattenOutline, outline } from '../outline'
+import { PART_REF_NODE } from '../partRefExtension'
 import { headingTitle, headingMark } from '../heading'
 
 /** ⚠ 記号は本物のテキスト（CONCEPT Q2 改訂・2026-08-23）。 */
@@ -180,5 +183,76 @@ describe('P1-3b: 階層変更', () => {
 
   it('見出しでないブロックには効かない（深さは位置で決まるので移動で表す）', () => {
     expect(setSectionLevel(editor.state, boundaries()[1]!, 2)).toBeNull()
+  })
+})
+
+/**
+ * ⭐⭐ パート参照の深さ（`setPartRefDepth`・§1-3-3e-2）。
+ *
+ * ⚠⚠ **見出しと「同じ操作」に見えて、書き換える先が違う**——
+ *   見出しは**本文の記号**、参照は**ノードの属性**。
+ *   ⚠ 取り違えると「押せるのに何も起きない」（記号が無いので書き換え対象が 0 件）。
+ */
+describe('パート参照の階層（§1-3-3e-2）', () => {
+  function refDoc() {
+    return new Editor({
+      extensions: documentExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          heading(1, 'しょう'),
+          { type: PART_REF_NODE, attrs: { instanceId: 'i1', partId: 'p1' } },
+        ],
+      },
+    })
+  }
+
+  /** 参照ノードの位置（doc 直下の 2 つ目）。 */
+  function refPos(ed: Editor): number {
+    return topLevelBoundaries(ed.state.doc)[1]!
+  }
+
+  it('⭐ 深さを書き換えると、ノードの属性に入る（本文の文字は変わらない）', () => {
+    const ed = refDoc()
+    const before = ed.state.doc.textContent
+    ed.view.dispatch(setPartRefDepth(ed.state, refPos(ed), 4)!)
+    expect(ed.state.doc.nodeAt(refPos(ed))!.attrs.depth).toBe(4)
+    // ⚠ 本文（見出し記号）には触っていない
+    expect(ed.state.doc.textContent).toBe(before)
+  })
+
+  it('⭐⭐ 見出し用の関数を参照に当てても何も起きない（取り違えの検出）', () => {
+    const ed = refDoc()
+    // ⚠⚠ 記号が無いので書き換え対象が 0 件＝`null`。**押せるのに何も起きない**の正体。
+    expect(setSectionLevel(ed.state, refPos(ed), 3)).toBeNull()
+  })
+
+  it('⭐ 参照用の関数を見出しに当てても何も起きない（逆向きの取り違え）', () => {
+    const ed = refDoc()
+    expect(setPartRefDepth(ed.state, 0, 3)).toBeNull()
+  })
+
+  it('上限・下限の外は断る（見出しと同じ規則）', () => {
+    const ed = refDoc()
+    expect(canChangeLevel(ed.state.doc, refPos(ed), 0).ok).toBe(false)
+    expect(canChangeLevel(ed.state.doc, refPos(ed), 7).ok).toBe(false)
+    expect(setPartRefDepth(ed.state, refPos(ed), 0)).toBeNull()
+    // 範囲内は通る（弾きすぎていないことの陽性対照）
+    expect(canChangeLevel(ed.state.doc, refPos(ed), 6).ok).toBe(true)
+  })
+
+  it('⚠ 参照は配下を持たないので `descendantsOutOfRange` にならない（見出しとの違い）', () => {
+    const ed = new Editor({
+      extensions: documentExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          { type: PART_REF_NODE, attrs: { instanceId: 'i1', partId: 'p1' } },
+          // ⚠ 参照の「あと」に深い見出しが在っても、それは参照の配下ではない
+          heading(6, 'ふかいせつ'),
+        ],
+      },
+    })
+    expect(canChangeLevel(ed.state.doc, 0, 6)).toEqual({ ok: true })
   })
 })

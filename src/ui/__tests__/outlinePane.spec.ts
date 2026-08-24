@@ -74,31 +74,46 @@ describe('章として扱う素材の行には印が出る（§1-3-3e 要望A）
 /** 階層移動のやじるし**そのもの**（§1-6-3 の帰結で、素材の行には出さないもの）。 */
 const ARROWS = 'button[title="階層を上げる"], button[title="階層を下げる"]'
 
-describe('⚠ 素材の行に階層移動のやじるしは出さない（§1-6-3 の帰結）', () => {
-  /**
-   * ⚠⚠ **「ボタンが 0 個」で書かない**（台帳 A68）。
-   *   ここが 0 なのは「**やじるしを出さないと決めた**」からであって、
-   *   「この行にボタンが在ってはならない」からではない。
-   *   ⚠ 要望B（生成済みパートの編集）は**まさにこの行に入口を出す話**なので、
-   *   数で書くと **B を入れた瞬間に赤くなり、その赤が「入口が増えた」なのか
-   *   「やじるしが戻った」なのか、テスト名からは決められない**。
-   *   → **やじるしを名指しする。** B で編集ボタンが増えても、この述語は赤くならない。
-   */
-  it('素材の行にやじるしが無い（押しても何も起きない／データに無い深さを書くため）', () => {
+/**
+ * ⭐⭐ **2026-08-25 に決定が変わった**（§1-3-3e-2・ロイス確認）。
+ *
+ * ⚠⚠ **ここは以前「素材の行にやじるしは出さない」を固定していた。**
+ *   ツリーに出ている参照は**章として扱われている**（`form === 'section'` しか出ない）ので、
+ *   **他の章と同じ操作ができるべき**——というのが本人の指摘で、決定が撤回された。
+ *   ⭐ **述語は「やじるしを名指しする」形のまま**（台帳 A68）で、**数だけが 0 → 2 になった**。
+ *   ⚠ もし数（`findAll('button')`）のままだったら、この撤回のときに
+ *   **「編集ボタンが増えたのか、やじるしが戻ったのか」が読めなかった。**
+ */
+describe('⭐ 素材の行にも階層の上げ下げが出る（§1-3-3e-2・決定の撤回）', () => {
+  it('素材の行にやじるしが 2 つ出る（章として扱っているのだから、章と同じ操作ができる）', () => {
     const wrapper = mountPane()
-    expect(rows(wrapper)[1]!.findAll(ARROWS)).toHaveLength(0)
+    expect(rows(wrapper)[1]!.findAll(ARROWS)).toHaveLength(2)
   })
 
-  it('陽性対照: 見出しの行にはやじるしが 2 つ出る（＝「出ない」が実装漏れではない）', () => {
+  it('見出しの行にも今までどおり 2 つ出る（片方だけ壊していないことの対照）', () => {
     const wrapper = mountPane()
     expect(rows(wrapper)[0]!.findAll(ARROWS)).toHaveLength(2)
   })
 
-  it('⭐⭐ 代わりに「深さは置いた場所で決まる」が読める（出せない理由を UI で言う）', () => {
-    // ⚠⚠ やじるしが無いことを**利用者が読める形**で説明しているか。
-    //   ここが空だと、利用者から見れば「ボタンが出ていない＝壊れている」と区別が付かない。
+  it('⭐ 上限・下限に達している向きは押せない（素材の行でも見出しと同じ規則）', () => {
+    const deep: OutlineItem[] = [
+      { kind: 'partRef', level: 1, title: 'いちばん上', pos: 0, children: [] },
+      { kind: 'partRef', level: 6, title: 'いちばん下', pos: 5, children: [] },
+    ]
+    const wrapper = mountPane(deep)
+    const disabledOf = (index: number) =>
+      rows(wrapper)[index]!.findAll(ARROWS).map((b) => (b.element as HTMLButtonElement).disabled)
+    // level 1 は「上げる」が押せない／level 6 は「下げる」が押せない
+    expect(disabledOf(0)).toEqual([true, false])
+    expect(disabledOf(1)).toEqual([false, true])
+  })
+
+  it('⭐⭐ バッジの説明が現状に合っている（上げ下げできると読める）', () => {
+    // ⚠⚠ 説明は**決定と一緒に変える**。古い説明（「深さは置いた場所で決まります」）が
+    //   残っていると、**画面に出ているやじるしを「使ってはいけない」と読ませる**。
     const title = mountPane().find('.outline__badge').attributes('title') ?? ''
     expect(title).toContain('章として扱われ')
-    expect(title).toContain('深さは置いた場所')
+    expect(title).toContain('階層を上げ下げできます')
+    expect(title).not.toContain('深さは置いた場所で決まります')
   })
 })

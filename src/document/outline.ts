@@ -76,11 +76,18 @@ export function outline(doc: PMNode, parts: Part[] = []): OutlineItem[] {
 
     // ⭐ 深さは「何を置いたか」ではなく「どこに置いたか」の属性（DESIGN 1-6-3）。
     //    同じパートを 2 箇所に置いたとき（S7-3）、両者が別の深さになれるのはこの向きだから。
-    //    ⚠ 明示的な深さ指定 UI は P2（配置 UI）の責務。ここでは囲っている見出しの 1 つ下に置く。
     // ⚠ **祖先には積まない。** 積むと次のパート参照の親になってしまい、
     //   「どこに置いたか」ではなく「何番目に置いたか」で深さが決まってしまう。
+    //   → **パート参照は配下を持たない**（左ペインの上げ下げで配下を気にしなくてよい根拠）。
     const enclosing = headingAncestors[headingAncestors.length - 1]
-    const level = Math.min((enclosing?.level ?? 0) + 1, MAX_LEVEL)
+    const derived = Math.min((enclosing?.level ?? 0) + 1, MAX_LEVEL)
+    // ⭐⭐ **明示された深さがあればそれを使う**（§1-3-3e-2・左ペインの上げ下げ）。
+    //   ⚠ 既定は `null`＝導出。**既存の doc は属性を持たない**ので、ここが後方互換の受け口。
+    const explicit = node.attrs.depth
+    const level =
+      typeof explicit === 'number' && Number.isFinite(explicit)
+        ? Math.min(Math.max(Math.trunc(explicit), 1), MAX_LEVEL)
+        : derived
     appendItem({ kind: 'partRef', level, title: part.title, pos, children: [] })
   }
 

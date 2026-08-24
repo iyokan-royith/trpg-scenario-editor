@@ -3,7 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { EditorContent, type Editor } from '@tiptap/vue-3'
 import { createDocumentEditor } from './document/editor'
 import { flattenOutline, outline } from './document/outline'
-import { dropTargetPos, moveSection, setSectionLevel, canChangeLevel } from './document/sections'
+import {
+  dropTargetPos,
+  moveSection,
+  setSectionLevel,
+  setPartRefDepth,
+  canChangeLevel,
+  isPartRefAt,
+} from './document/sections'
 import { docToMd, mdToDoc } from './document/markdown'
 import { restoreHeadingMarksInJson } from './document/heading'
 import { documentSchema } from './document/schema'
@@ -411,7 +418,11 @@ function onChangeLevel(payload: { pos: number; level: number }) {
         : ''
     return
   }
-  const tr = setSectionLevel(ed.state, payload.pos, payload.level)
+  // ⚠⚠ **書き換える先が違う**（§1-3-3e-2）——見出しは本文の記号、パート参照はノードの属性。
+  //   ⚠ 取り違えると「押せるのに何も起きない」になる（記号が無いので書き換え対象が 0 件）。
+  const tr = isPartRefAt(ed.state.doc, payload.pos)
+    ? setPartRefDepth(ed.state, payload.pos, payload.level)
+    : setSectionLevel(ed.state, payload.pos, payload.level)
   if (!tr) {
     notice.value = ''
     return

@@ -56,7 +56,8 @@ const PART_BADGE_LABEL = '素材の章'
  *   → **出せない代わりに「何が深さを決めているか」をここで言う。**
  *   ⚠ 本当に階層を動かす操作（別の見出しの下へ**移す**）は別設計。
  */
-const PART_BADGE_TITLE = '本文に置いた素材です。章として扱われ、深さは置いた場所（囲っている見出しの1つ下）で決まります'
+const PART_BADGE_TITLE =
+  '本文に置いた素材です。章として扱われ、他の章と同じように階層を上げ下げできます（指定しなければ、置いた場所の1つ下）'
 const grabbedPos = ref<number | null>(null)
 
 function grab(item: OutlineItem) {
@@ -82,12 +83,18 @@ function cancel() {
   emit('dragEnd')
 }
 
-/** 上限・下限に達している向きのボタンは押せなくする（要望4）。 */
+/**
+ * 上限・下限に達している向きのボタンは押せなくする（要望4）。
+ *
+ * ⭐⭐ **パート参照（素材の章）も対象**（§1-3-3e-2・2026-08-25 ロイス確認で決定が変わった）。
+ *   ツリーに出ている参照は**章として扱われている**ので、他の章と同じ操作ができる。
+ *   ⚠ 見出しと違い**配下を持たない**ので、見るのは上限・下限だけ。
+ */
 function canPromote(item: OutlineItem) {
-  return item.kind === 'heading' && item.level > MIN_LEVEL
+  return item.level > MIN_LEVEL
 }
 function canDemote(item: OutlineItem) {
-  return item.kind === 'heading' && item.level < MAX_LEVEL
+  return item.level < MAX_LEVEL
 }
 </script>
 
@@ -120,7 +127,8 @@ function canDemote(item: OutlineItem) {
         <span v-if="item.kind === 'partRef'" class="outline__badge" :title="PART_BADGE_TITLE">
           {{ PART_BADGE_LABEL }}
         </span>
-        <span v-else class="outline__tools">
+        <!-- ⭐ やじるしは**章なら出す**（素材の章も章・§1-3-3e-2）。⚠ 書き換える先は種別で違う -->
+        <span class="outline__tools">
           <button
             type="button"
             title="階層を上げる"

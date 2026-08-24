@@ -136,6 +136,14 @@ export function canChangeLevel(
   sourcePos: number,
   newLevel: number,
 ): LevelChangeResult {
+  // ⭐⭐ パート参照も**章として扱われている**ので上げ下げできる（§1-3-3e-2）。
+  //   ⚠ ただし見出しと違って**配下を持たない**——`outline.ts` の `placeRef` は
+  //   参照を祖先に積まないので、参照の下に何かがぶら下がることが構造的に無い。
+  //   → **`descendantsOutOfRange` の判定は不要**で、見るのは上限・下限だけ。
+  if (isPartRefAt(doc, sourcePos)) {
+    if (newLevel < MIN_LEVEL || newLevel > MAX_LEVEL) return { ok: false, reason: 'outOfRange' }
+    return { ok: true }
+  }
   const range = sectionRangeAt(doc, sourcePos)
   if (!range || range.level === null) return { ok: false, reason: 'notHeading' }
   if (newLevel < MIN_LEVEL || newLevel > MAX_LEVEL) {
@@ -199,6 +207,30 @@ export function setSectionLevel(
   for (const item of [...rewrites].reverse()) {
     tr.insertText(item.mark, item.from, item.to)
   }
+  return tr.docChanged ? tr : null
+}
+
+/**
+ * ⭐ パート参照の**明示的な深さ**を書き換える Transaction を組む（§1-3-3e-2）。
+ *
+ * ⚠⚠ **見出しとは別の実体を書く。** 見出しの階層は**本文の記号**が真実だが、
+ *   参照には記号が無い（atom ノード）ので、**ノードの属性**に書く。
+ *   ⚠ 同じ「レベルの上げ下げ」に見えて、**書き換える先が違う**——
+ *   `setSectionLevel()` を参照に当てても何も起きない（記号が無いので書き換え対象が 0 件）。
+ *
+ * ⚠ 深さは**その参照（配置）だけ**の属性なので、同じパートを置いた別の箇所は変わらない（S7-3）。
+ */
+export function setPartRefDepth(
+  state: EditorState,
+  sourcePos: number,
+  newLevel: number,
+): Transaction | null {
+  const doc = state.doc
+  if (!isPartRefAt(doc, sourcePos)) return null
+  if (!canChangeLevel(doc, sourcePos, newLevel).ok) return null
+  const node = doc.nodeAt(sourcePos)
+  if (!node) return null
+  const tr = state.tr.setNodeMarkup(sourcePos, undefined, { ...node.attrs, depth: newLevel })
   return tr.docChanged ? tr : null
 }
 

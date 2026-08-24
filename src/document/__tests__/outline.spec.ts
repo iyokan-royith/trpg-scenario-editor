@@ -271,3 +271,88 @@ describe('P2: 走査は inline 版の参照も対象にする', () => {
     expect(treeOf(figureRef).map((i) => i.kind)).toEqual(['heading'])
   })
 })
+
+/**
+ * ⭐⭐ 明示的な深さ（`partRef.attrs.depth`・§1-3-3e-2）。
+ *
+ * ⚠⚠ **この変更で壊れうる唯一の性質は S7-3**——
+ *   「同じパートを 2 箇所に置いたとき、両者が**別の深さ**になれる」。
+ *   深さを**パート側**に持たせると壊れる。**ノード（配置）側**に持たせるから保たれる。
+ */
+describe('明示的な深さ（§1-3-3e-2）', () => {
+  function docWith(content: Record<string, unknown>[]) {
+    return new Editor({
+      extensions: documentExtensions,
+      // ⚠ 手書きの JSON を渡すので、Tiptap の型には合わせず実物の形で入れる。
+      content: { type: 'doc', content } as unknown as string,
+    })
+  }
+
+  it('⭐ 属性が無ければ今までどおり導出される（既存の doc・後方互換）', () => {
+    // ⚠⚠ 既存の doc は `depth` を持たない。ここが壊れると、
+    //   **前の版で書いた本文を開いた瞬間に階層が総崩れになる**（§1-9 で 1 度踏んだ型）。
+    const ed = docWith([heading(1, 'しょう'), heading(2, 'せつ'), makeRef('ひきだし:h1')])
+    const flat = flattenOutline(outline(ed.state.doc, parts))
+    const ref = flat.find((i) => i.kind === 'partRef')!
+    expect(ref.level).toBe(3) // 囲っている見出し（level 2）の 1 つ下
+  })
+
+  it('⭐ 属性があればその深さで出る（囲っている見出しに関わらず）', () => {
+    const ed = docWith([
+      heading(1, 'しょう'),
+      heading(2, 'せつ'),
+      { ...makeRef('ひきだし:h1'), attrs: { instanceId: 'i1', partId: 'ひきだし:h1', depth: 1 } },
+    ])
+    const ref = flattenOutline(outline(ed.state.doc, parts)).find((i) => i.kind === 'partRef')!
+    expect(ref.level).toBe(1)
+  })
+
+  /** 同じパートへの参照を n 個並べる（深さは配置ごとに指定できる）。 */
+  function refWithDepth(depth: number | null) {
+    return { ...makeRef('ひきだし:h1'), attrs: { instanceId: 'i1', partId: 'ひきだし:h1', depth } }
+  }
+
+  it('⭐⭐⭐ S7-3: 同じパートを 2 箇所に置いて、片方だけ深さを変えられる', () => {
+    const ed = docWith([heading(1, 'しょう'), makeRef('ひきだし:h1'), refWithDepth(5)])
+    const refs = flattenOutline(outline(ed.state.doc, parts)).filter((i) => i.kind === 'partRef')
+    expect(refs).toHaveLength(2)
+    // ⚠⚠ 同じパート（同じ題）なのに深さが違う。⚠ 深さをパート側に持たせると必ず一致してしまう。
+    expect(refs.map((r) => r.title)).toEqual([refs[0]!.title, refs[0]!.title])
+    expect(refs.map((r) => r.level)).toEqual([2, 5])
+  })
+
+  /**
+   * ⚠⚠ **この 2 本は「片方だけ明示」では捕まらない穴を塞ぐ**（変異で実測）。
+   *   深さを**パート単位**（最初に見た値を同じパート全部に使う）で持つ実装は、
+   *   上のテストを**素通りする**——1 つ目が明示を持たないので、地図に何も溜まらないから。
+   *   → **両方が明示を持つ場合**と、**明示が先に来る場合**を並べる。
+   */
+  it('⭐⭐ 両方に別々の深さを指定できる（配置ごとに持っている）', () => {
+    const ed = docWith([heading(1, 'しょう'), refWithDepth(3), refWithDepth(5)])
+    const refs = flattenOutline(outline(ed.state.doc, parts)).filter((i) => i.kind === 'partRef')
+    expect(refs.map((r) => r.level)).toEqual([3, 5])
+  })
+
+  it('⭐⭐ 明示した参照のあとに、明示していない同じパートの参照が来ても導出のまま', () => {
+    const ed = docWith([heading(1, 'しょう'), refWithDepth(5), makeRef('ひきだし:h1')])
+    const refs = flattenOutline(outline(ed.state.doc, parts)).filter((i) => i.kind === 'partRef')
+    // ⚠ 2 つ目が 5 になったら、深さが**パートに染み出している**（配置の属性ではなくなっている）
+    expect(refs.map((r) => r.level)).toEqual([5, 2])
+  })
+
+  it('範囲の外を指す属性は畳む（保存済みデータ・手書き JSON から来うる）', () => {
+    const ed = docWith([
+      { ...makeRef('ひきだし:h1'), attrs: { instanceId: 'i1', partId: 'ひきだし:h1', depth: 99 } },
+    ])
+    const ref = flattenOutline(outline(ed.state.doc, parts)).find((i) => i.kind === 'partRef')!
+    expect(ref.level).toBe(6)
+  })
+
+  it('⭐ パート参照は配下を持たない（＝上げ下げで配下を気にしなくてよい根拠）', () => {
+    // ⚠ 参照のあとに深い見出しが来ても、**参照の子にはならない**（祖先に積まないため）。
+    const ed = docWith([heading(1, 'しょう'), makeRef('ひきだし:h1'), heading(3, 'あとのせつ')])
+    const tree = outline(ed.state.doc, parts)
+    const ref = flattenOutline(tree).find((i) => i.kind === 'partRef')!
+    expect(ref.children).toHaveLength(0)
+  })
+})

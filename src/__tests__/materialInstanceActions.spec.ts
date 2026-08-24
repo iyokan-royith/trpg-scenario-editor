@@ -14,6 +14,7 @@
 import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import type { Editor } from '@tiptap/vue-3'
 import App from '../App.vue'
@@ -400,5 +401,50 @@ describe('生成済み素材を編集できる（§1-11・要望B）', () => {
     const confirm = wrapper!.find('.app__confirm')
     expect(confirm.exists()).toBe(true)
     expect(confirm.text()).toContain('別の素材を編集')
+  })
+})
+
+/**
+ * ⭐⭐ 左ツリーから「素材の章」の階層を上げ下げする（§1-3-3e-2・決定の撤回）。
+ *
+ * ⚠⚠ **層ごとの緑では足りない**——`outline` が属性を読むこと・`setPartRefDepth` が属性を書くこと・
+ *   `OutlinePane` がボタンを出すことが**全部緑でも、App の配線が 1 本抜けていれば何も起きない**
+ *   （このファイルの冒頭の警告と同じ型）。ここは**押して、ツリーの表示が変わる**まで見る。
+ */
+describe('左ツリーで素材の章の階層を変えられる（§1-3-3e-2）', () => {
+  /** 素材の章の行（左ツリー）。 */
+  function partRow() {
+    return wrapper!.find('.outline__item[data-kind="partRef"]')
+  }
+
+  it('⭐ やじるしを押すと深さが変わり、ツリーの表示（インデント）も変わる', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    await insertFromRow(1) // 部屋のパート（`section`）を本文へ
+
+    const before = Number(partRow().attributes('data-level'))
+    // 「階層を下げる」
+    await partRow().find('button[title="階層を下げる"]').trigger('click')
+    await nextTick()
+
+    expect(Number(partRow().attributes('data-level'))).toBe(before + 1)
+    // ⚠ 本文側にも入っている（表示だけ変えて保存されない、を防ぐ）
+    const refs = collectPlacedRefs(editorOf().state.doc)
+    expect(refs).toHaveLength(1)
+    expect(editorOf().state.doc.nodeAt(refs[0]!.pos)!.attrs.depth).toBe(before + 1)
+  })
+
+  it('⭐ 上げると戻る（往復できる＝押しても何も起きない、ではない）', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    await insertFromRow(1)
+
+    const before = Number(partRow().attributes('data-level'))
+    await partRow().find('button[title="階層を下げる"]').trigger('click')
+    await nextTick()
+    await partRow().find('button[title="階層を上げる"]').trigger('click')
+    await nextTick()
+
+    expect(Number(partRow().attributes('data-level'))).toBe(before)
   })
 })

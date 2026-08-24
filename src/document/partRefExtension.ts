@@ -6,10 +6,22 @@ import PartRefView from './PartRefView.vue'
 export const PART_REF_NODE = 'partRef'
 export const PART_REF_INLINE_NODE = 'partRefInline'
 
-/** 参照ノードの共通部分。⚠ block 版と inline 版で**属性の形を分けない**（走査も突き合わせも同じ）。 */
+/**
+ * 参照ノードの共通部分。⚠ block 版と inline 版で**属性の形を分けない**（走査も突き合わせも同じ）。
+ *
+ * ⭐⭐ `depth` は**明示的に指定された深さ**（DESIGN-v0.md §1-3-3e-2）。
+ *   ⚠ **`null` が既定**で、そのときは今までどおり「囲っている見出しの 1 つ下」に導出される
+ *   （§1-6-3）。**既存の doc は属性を持たない**ので、後方互換はこの既定値で取れる。
+ *
+ * ⚠⚠ **深さは「配置」の属性であって、パートの属性ではない。**
+ *   だから**ノード**が持つ——同じパートを 2 箇所に置いたとき、
+ *   **片方だけ深さを変えられる**（S7-3）のはこの向きだからである。
+ *   ⚠ パート側（`Part.form` など）に持たせると、この性質が壊れる。
+ */
 const refAttributes = () => ({
   instanceId: { default: null },
   partId: { default: null },
+  depth: { default: null },
 })
 
 /**
