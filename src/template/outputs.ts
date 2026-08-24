@@ -47,8 +47,14 @@ export function isPatternOutput(output: OutputDef): output is { pattern: string 
  */
 export type InlineNode =
   | { node: 'text'; text: string }
-  /** 現在のスコープからのフィールドパス（`a.b.c`）。`repeat` の中では束縛された要素が起点 */
-  | { node: 'fieldRef'; path: string }
+  /**
+   * 現在のスコープからのフィールドパス（`a.b.c`）。`repeat` の中では束縛された要素が起点。
+   * `default` はパスが解決できない（＝フィールドそのものが無い）ときに代わりに使う値。
+   * ⚠ **値だけを保持する（データを書き込むわけではない）**。省略可フィールドを空扱いする
+   * 既存の挙動（`joinParagraphs` の `isEmptySeq`）とは別の目的で、
+   * 「フィールドが無くても表示上は既定値で揃えたい」場面（`roomStats` の T0/E0 等）のために足した。
+   */
+  | { node: 'fieldRef'; path: string; default?: unknown }
   /** 画像フィールドへの参照。実体は `TemplateInstance.images[key]` */
   | { node: 'imageRef'; key: string; alt: string }
   /** 自由 HTML。⚠ 1-4 の契約により iframe sandbox で描画する（描画側は P4） */
@@ -92,17 +98,81 @@ function isCoordinate(value: unknown): value is { row: string; col: number } {
   return isRecord(value) && typeof value.row === 'string' && typeof value.col === 'number'
 }
 
+/** 導出値（1-3 の `derived`・4 点セット）。 */
+export interface DerivedValue {
+  computed: number | null
+  displayed: number | null
+  useDisplayed: boolean
+  reason?: string
+}
+
+function isDerivedValue(value: unknown): value is DerivedValue {
+  return isRecord(value) && typeof value.useDisplayed === 'boolean' && 'computed' in value && 'displayed' in value
+}
+
+/**
+ * 導出値（1-3）を表示用の文字列にする。
+ * ⚠ `表示値を使うか` に従って `表示値`／`計算値` のどちらを出すかを決める（v0 では `計算値` は常に null）。
+ *
+ * ⚠⚠ **`reason` は本文には出さない**（DESIGN 1-6-10・確定版）。
+ *   【ものかげ】のような偽装トラップは「本物の値と偽装後の値が見分けられないこと」自体が効果である。
+ *   `reason` を値の横に出すと、その場で偽装だと分かってしまい効果が消える。
+ *   → **`reason` は 4 点セットの中に残し、GM 資料や将来の別ビューが読む器とする**。
+ *     `roomStats` の独立章表示は「表示値／計算値のどちらを見せるか」の結果だけを出す。
+ */
+function formatDerivedValue(value: DerivedValue): string {
+  const raw = value.useDisplayed ? value.displayed : value.computed
+  if (raw === null || raw === undefined) return ''
+  return String(raw)
+}
+
+/** `部屋データ`（`roomStats`）の形（1-6-10）。 */
+export interface RoomStats {
+  trapCount: DerivedValue
+  enemyCount: DerivedValue
+}
+
+function isRoomStats(value: unknown): value is RoomStats {
+  return isRecord(value) && 'trapCount' in value && 'enemyCount' in value
+}
+
+/**
+ * `roomStats` を持たない部屋で使う既定値（DESIGN 1-6-10・確定版）。
+ *
+ * ⭐⭐ **持たない部屋も「T0/E0」として表示で揃える。** これは表示規則であり、
+ *   `TemplateInstance.data` に `0` を書き込むという意味ではない——**この定数は宣言側（コード）に
+ *   だけ存在し、データ側は無いままである**（`fieldRef.default` として使う。下記 `evaluateInlineSeq`）。
+ *
+ * ⚠⚠ **「表示が揃うこと」と「データが区別できること」は両立させる。**
+ *   【ものかげ】のように偽装で `0` を見せている部屋は、`roomStats` を**実際に持ち**、
+ *   `enemyCount: { computed: null, displayed: 0, useDisplayed: true, reason: '…' }` のように
+ *   `reason` で区別する。**表示だけを揃え、器（4 点セット）は潰さない。**
+ *   見分けが付かない表示こそがこの機能の目的（偽装トラップの効果そのもの）で、
+ *   区別は常に**データ側**（`computed`/`displayed`/`useDisplayed`/`reason`）に残す。
+ */
+export const NO_ROOM_STATS: RoomStats = {
+  trapCount: { computed: null, displayed: 0, useDisplayed: true },
+  enemyCount: { computed: null, displayed: 0, useDisplayed: true },
+}
+
+/** `roomStats` を1行にまとめる（DESIGN 1-6-10）。「トラップ数 X／エネミー数 Y」の形で固定。 */
+function formatRoomStats(value: RoomStats): string {
+  return `トラップ数 ${formatValue(value.trapCount)}／エネミー数 ${formatValue(value.enemyCount)}`
+}
+
 /**
  * `field-ref` が指した値を表示用の文字列にする。
  *
  * ⚠ **設計書は「field-ref が非スカラーを指したときに何が出るか」を定義していない。**
- *   ここでは**型で決まる表示**だけを持つ（座標 → `C-3`）。
+ *   ここでは**型で決まる表示**だけを持つ（座標 → `C-3`・導出値 → 表示値／計算値・`roomStats` → 1行）。
  *   データの意味による分岐（遭遇の 2 形態・`*2` の 1 体省略・エリアの並び替え）は
  *   静的な文法では**原理的に書けない**ので、ここには入れない。→ 報告事項。
  */
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (isCoordinate(value)) return `${value.row}-${value.col}`
+  if (isRoomStats(value)) return formatRoomStats(value)
+  if (isDerivedValue(value)) return formatDerivedValue(value)
   if (typeof value === 'object') return ''
   return String(value)
 }
@@ -125,9 +195,11 @@ function evaluateInlineSeq(seq: InlineSeq, scope: unknown, instance: TemplateIns
       case 'text':
         out.push({ kind: 'text', text: node.text })
         break
-      case 'fieldRef':
-        out.push({ kind: 'text', text: formatValue(resolvePath(scope, node.path)) })
+      case 'fieldRef': {
+        const resolved = resolvePath(scope, node.path)
+        out.push({ kind: 'text', text: formatValue(resolved === undefined ? node.default : resolved) })
         break
+      }
       case 'imageRef': {
         const image = instance.images[node.key]
         // ⚠ 未設定を握りつぶさない。何が無いのかを本文にも一覧にも同じ文字列で出す。

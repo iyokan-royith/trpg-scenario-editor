@@ -186,6 +186,114 @@ describe('inline — field-ref / image-ref / inline-repeat', () => {
   })
 })
 
+describe('field-ref の default（フィールドが無いときの既定値・DESIGN 1-6-10）', () => {
+  it('パスが解決できないときだけ default を使う', () => {
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'missing', default: 'きめうち' }] },
+    ]
+    expect(inlineText(onlyPart(evaluateOutputs(nodes, instanceOf({}))).body)).toBe('きめうち')
+  })
+
+  it('値が実在するときは default を無視する', () => {
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'v', default: 'つかわれない' }] },
+    ]
+    expect(inlineText(onlyPart(evaluateOutputs(nodes, instanceOf({ v: 'ほんもの' }))).body)).toBe('ほんもの')
+  })
+
+  it('⚠ default はデータに書き込まれない（宣言側だけの値）', () => {
+    const data = instanceOf({})
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'missing', default: 0 }] },
+    ]
+    evaluateOutputs(nodes, data)
+    expect(data.data).toEqual({})
+  })
+})
+
+describe('derived（1-3 の 4 点セット）と roomStats（1-6-10）', () => {
+  it('useDisplayed が真なら displayed を、偽なら computed を出す', () => {
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'v' }] },
+    ]
+    const displayed = evaluateOutputs(
+      nodes,
+      instanceOf({ v: { computed: 1, displayed: 9, useDisplayed: true } }),
+    )
+    const computed = evaluateOutputs(
+      nodes,
+      instanceOf({ v: { computed: 1, displayed: 9, useDisplayed: false } }),
+    )
+    expect(inlineText(displayed[0]!.body)).toBe('9')
+    expect(inlineText(computed[0]!.body)).toBe('1')
+  })
+
+  it('v0 では computed が null（未計算）なので、useDisplayed が偽だと空文字になる', () => {
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'v' }] },
+    ]
+    const part = onlyPart(
+      evaluateOutputs(nodes, instanceOf({ v: { computed: null, displayed: 9, useDisplayed: false } })),
+    )
+    expect(inlineText(part.body)).toBe('')
+  })
+
+  it('⚠⚠ reason は本文に出さない（偽装トラップの「見分けが付かないこと」自体が効果のため）', () => {
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'v' }] },
+    ]
+    const part = onlyPart(
+      evaluateOutputs(
+        nodes,
+        instanceOf({ v: { computed: null, displayed: 0, useDisplayed: true, reason: '偽装の理由' } }),
+      ),
+    )
+    expect(inlineText(part.body)).toBe('0')
+    expect(inlineText(part.body)).not.toContain('偽装の理由')
+  })
+
+  it('roomStats は「トラップ数 X／エネミー数 Y」の1行にまとまる', () => {
+    const nodes: OutputNode[] = [
+      { node: 'inlinePart', key: 'p', body: [{ node: 'fieldRef', path: 'roomStats' }] },
+    ]
+    const part = onlyPart(
+      evaluateOutputs(
+        nodes,
+        instanceOf({
+          roomStats: {
+            trapCount: { computed: null, displayed: 3, useDisplayed: true },
+            enemyCount: { computed: null, displayed: 5, useDisplayed: true },
+          },
+        }),
+      ),
+    )
+    expect(inlineText(part.body)).toBe('トラップ数 3／エネミー数 5')
+  })
+
+  it('⭐⭐ roomStats を持たないフィールドに default（NO_ROOM_STATS 相当）を渡すと T0/E0 になる', () => {
+    const nodes: OutputNode[] = [
+      {
+        node: 'inlinePart',
+        key: 'p',
+        body: [
+          {
+            node: 'fieldRef',
+            path: 'roomStats',
+            default: {
+              trapCount: { computed: null, displayed: 0, useDisplayed: true },
+              enemyCount: { computed: null, displayed: 0, useDisplayed: true },
+            },
+          },
+        ],
+      },
+    ]
+    // ⚠ 変異確認: この default を外すと `formatValue(undefined)` → `''` になり、
+    //   本テストは「トラップ数 ／エネミー数 」ではなく空文字を見て落ちるはず（＝検査が当たっている証拠）。
+    const part = onlyPart(evaluateOutputs(nodes, instanceOf({})))
+    expect(inlineText(part.body)).toBe('トラップ数 0／エネミー数 0')
+  })
+})
+
 describe('blockPart の段落', () => {
   const nodes: OutputNode[] = [
     {

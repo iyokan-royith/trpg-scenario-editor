@@ -7,7 +7,7 @@
  *
  * ⚠ 生まれるパートは **1 ＋ （部屋の件数） ＋ 1**。真ん中は `repeat` なので**データで決まる**。
  */
-import type { OutputNode } from '../outputs'
+import { NO_ROOM_STATS, type OutputNode } from '../outputs'
 
 export const DUNGEON_MAP_PATTERN = 'builtin:dungeon-map'
 
@@ -84,6 +84,15 @@ export const DUNGEON_MAP_OUTPUTS: OutputNode[] = [
             ],
           },
         ],
+        // ⭐⭐ DESIGN 1-6-10（確定版）: `roomStats` を独立章にも出す。
+        //   **持たない部屋も「トラップ数0／エネミー数0」として表示で揃える**（`default: NO_ROOM_STATS`）。
+        //   ⚠ これは表示規則であって、`default` はデータに書き込まれない——持たない部屋の
+        //   `TemplateInstance.data` は roomStats を持たないままである（NO_ROOM_STATS は宣言側の定数）。
+        //   ⚠⚠ 表示を揃えることと区別を保つことは両立させる。【ものかげ】のように偽装で 0 を
+        //   見せている部屋は roomStats を実際に持ち、reason 付きの導出値で内部的に区別される
+        //   （`outputs.ts` の `NO_ROOM_STATS` のコメント参照）。見分けが付かない表示こそが
+        //   偽装トラップの効果そのものなので、意図的に「揃える」を選んでいる。
+        [{ node: 'fieldRef', path: 'roomStats', default: NO_ROOM_STATS }],
         [{ node: 'fieldRef', path: 'description' }],
       ],
     },
@@ -94,6 +103,10 @@ export const DUNGEON_MAP_OUTPUTS: OutputNode[] = [
     title: [{ node: 'text', text: '全体マップ' }],
     // ⚠ 描画は P4。v0 は「宣言だけ」で、パートとしては生まれる（CONCEPT S8-2）。
     renderer: 'dungeon-grid',
-    args: { rooms: 'rooms', corridors: 'corridors', entrances: 'entrances' },
+    // ⚠ `args.rooms` は部屋データそのもの（`roomStats` を含む）を指す既存のパス。
+    //   P4 が部屋ラベル（元の `T{n}/E{n}` の位置）を描くとき、`args.rooms[].roomStats` を
+    //   `roomStatsDefault` と同じ規則（`fieldRef.default` と同一の定数）で解決すれば、
+    //   独立章と同じ「持たない部屋も T0/E0」表示になる。⚠ v0 では評価しない（宣言のみ）。
+    args: { rooms: 'rooms', corridors: 'corridors', entrances: 'entrances', roomStatsDefault: NO_ROOM_STATS },
   },
 ]
