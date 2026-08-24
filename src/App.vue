@@ -25,7 +25,7 @@ import {
   PART_REF_INLINE_NODE,
   PART_REF_NODE,
 } from './document/partRefExtension'
-import { legacyImagePartIdRemap } from './template/render/image'
+import { legacyImagePartIdRemap, IMAGE_TEMPLATE_ID } from './template/render/image'
 import { partKeyOf, type Part, type TemplateInstance } from './template/model'
 
 /**
@@ -296,13 +296,18 @@ function onInsertMaterial(part: Part) {
  *   本文側の参照は**残す**（勝手に本文を書き換えない）。残った参照は「行方不明のパート」として見える。
  */
 async function onRemoveMaterial(part: Part) {
-  const placedCount = countPlaced(part)
+  // ⚠⚠ **消えるのは素材（インスタンス）まるごと**なので、数えるのも知らせるのも素材の全パート分。
+  //   押した 1 件だけを数えると、他のパートが置かれていた箇所を黙って行方不明にする。
+  const partCount = store.partsOfInstance(part.instanceId).length
+  const placedCount = countPlacedOfInstance(part.instanceId)
   store.removeInstance(part.instanceId)
   revision.value += 1
+  const what =
+    partCount > 1 ? `「${part.title}」の素材（パート ${partCount} 件）` : `「${part.title}」`
   notice.value =
     placedCount > 0
-      ? `「${part.title}」を消しました。本文に ${placedCount} 箇所、行方不明の参照が残っています`
-      : `「${part.title}」を消しました`
+      ? `${what}を消しました。本文に ${placedCount} 箇所、行方不明の参照が残っています`
+      : `${what}を消しました`
   try {
     await deleteInstance(part.instanceId)
   } catch (error) {
@@ -312,17 +317,36 @@ async function onRemoveMaterial(part: Part) {
   }
 }
 
-/** そのパートが本文に何箇所置かれているか。⚠ 走査は document 層の 1 本を使う（数え方を増やさない）。 */
-function countPlaced(part: Part): number {
+/**
+ * その**素材**（インスタンス）が本文に何箇所置かれているか——パートの別は問わない。
+ * ⚠ 走査は document 層の 1 本を使う（数え方を増やさない）。
+ * ⚠ パート単位で数えると、複数パートの素材を消したときに件数を過少申告する。
+ */
+function countPlacedOfInstance(instanceId: string): number {
   const doc = editor.value?.state.doc
   if (!doc) return 0
-  const key = partKeyOf(part.instanceId, part.partId)
-  return collectPlacedRefs(doc).filter((ref) => partKeyOf(ref.instanceId, ref.partId) === key)
-    .length
+  return collectPlacedRefs(doc).filter((ref) => ref.instanceId === instanceId).length
 }
 
-/** テンプレート一覧に並べる定義。⚠ 同梱と持ち込みを区別しない（Q6）。 */
-const templateList = computed(() => Object.values(store.definitions))
+/**
+ * テンプレート一覧に並べる定義。⚠ 同梱と持ち込みを区別しない（Q6）。
+ *
+ * ⚠⚠ **画像だけは一覧に出さない**（§1-7-2 の 2026-08-24 決定・台帳 A48）。
+ *   一覧から画像を選んで保存すると **画像の付けようがない空パートが 1 件**生まれ、
+ *   「未配置 N 件」にも入る（`image` 型の入力欄がまだ無いので、この経路では必ず空になる）。
+ *   **画像の入口は「素材を追加」ボタン 1 本**である。
+ *
+ * ⚠ 除外は**この UI 層だけ**で行う。定義そのものは今までどおり登録されているし、
+ *   下層（`derivePartsOf` / 保存 / 配置）は 1 行も画像を知らない（§1-7-2「内部で特別扱いしない」）。
+ */
+const templateList = computed(() =>
+  Object.values(store.definitions).filter((def) => def.id !== IMAGE_TEMPLATE_ID),
+)
+
+/** 「差し替え」を出してよい素材（＝定義に画像欄がある）。⚠ 判定はストア側（宣言を読む）。 */
+const replaceableInstanceIds = computed(() =>
+  Object.keys(store.instances).filter((id) => store.imageFieldKeyOfInstance(id) !== undefined),
+)
 
 /**
  * テンプレのフォームから素材を 1 件作る（P2 完了条件 #2〜#4）。
@@ -400,6 +424,7 @@ function importMd() {
           class="app__materials"
           :parts="store.parts"
           :unplacedKeys="unplacedKeys"
+          :replaceableInstanceIds="replaceableInstanceIds"
           @addImage="onAddImage"
           @insert="onInsertMaterial"
           @replace="onReplaceMaterial"

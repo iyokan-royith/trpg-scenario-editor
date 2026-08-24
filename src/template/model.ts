@@ -114,6 +114,24 @@ export function partKeyOf(instanceId: string, partId: string): string {
   return `${instanceId}/${partId}`
 }
 
+/**
+ * その定義が「実体を差し替えられる画像」を持つなら、そのフィールドのキー。
+ *
+ * ⚠⚠ **これは画像テンプレを名指しするための関数ではない**（それは §1-7-2 が禁じている）。
+ *   宣言（`fields`）を読んで「`image` 型の欄があるか」を聞いているだけなので、
+ *   利用者が持ち込む定義でも同じように効く。
+ *
+ * ⚠ **無いことに意味がある**——「差し替え」を出してよいかの判定がこれ。
+ *   これを見ずに差し替えを出すと、画像を持たない素材に実体を書き込める
+ *   （画面には何も起きないのに保存だけされる、という壊れ方をする）。
+ *
+ * ⚠ 先頭の 1 つだけを返す。v0 の宣言はどれも画像欄を高々 1 つしか持たない。
+ *   複数持つ定義が出たら「どれを差し替えるか」を利用者に聞く必要があり、それは別の設計判断になる。
+ */
+export function imageFieldKeyOf(def: TemplateDefinition): string | undefined {
+  return def.fields.find((field) => field.type === 'image')?.key
+}
+
 /** パートの中身を、表示用の 1 本のテキストへ畳む（一覧・テストの照合用）。 */
 export function inlineText(body: Inline[]): string {
   return body.map((item) => (item.kind === 'text' ? item.text : item.alt)).join('')

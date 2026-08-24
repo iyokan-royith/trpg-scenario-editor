@@ -38,11 +38,12 @@ afterEach(() => {
 })
 
 describe('テンプレート一覧（完了条件 #1）', () => {
-  it('同梱の 2 件が名前で並ぶ（同梱もユーザー持ち込みも同じ経路・Q6）', async () => {
+  it('同梱の定義が名前で並ぶ（同梱もユーザー持ち込みも同じ経路・Q6）', async () => {
     const app = await mountApp()
     const names = app.findAll('.tpane__item').map((b) => b.text())
-    expect(names).toContain('画像')
     expect(names).toContain('迷宮マップ')
+    // ⚠ 一覧に出るのは定義の**名前**であって id ではない
+    expect(names).not.toContain(DUNGEON_MAP_TEMPLATE_ID)
   })
 
   it('選ぶまでフォームは出ない／選ぶとそのテンプレのフォームが出る', async () => {
@@ -56,14 +57,23 @@ describe('テンプレート一覧（完了条件 #1）', () => {
     expect(app.find('.tform').text()).not.toContain(DUNGEON_MAP_TEMPLATE_ID)
   })
 
-  it('画像テンプレも同じ一覧に並ぶ（1-7-1: 層は違うが特別扱いはしない）', async () => {
+  /**
+   * ⭐ 台帳 A48 / §1-7-2 の 2026-08-24 決定。
+   *
+   * ⚠⚠ **この 1 本は、以前は逆のこと（画像も一覧に並ぶ）を確かめていた。**
+   *   実測で「一覧から画像を保存すると**画像の付けようがない空パート 1 件**が生まれ、
+   *   未配置件数にも入る」と分かり、仕様の側が決着した（衝突していたのは完了条件と §1-7-2）。
+   */
+  it('⭐ 画像だけは一覧に出さない（素材追加ボタンが画像の唯一の入口・A48）', async () => {
     const app = await mountApp()
-    const image = app.findAll('.tpane__item').find((b) => b.text() === '画像')!
-    await image.trigger('click')
-    // 画像フィールドは未対応（この切れ目の範囲外）。⚠ それでもフォームは開く
-    expect(app.find('.tform').exists()).toBe(true)
-    expect(app.find('.field__unsupported').text()).toContain('まだ入力できません')
+    const names = app.findAll('.tpane__item').map((b) => b.text())
+    expect(names).not.toContain('画像')
+
+    // ⚠⚠ **除外は UI 層だけ**。定義は今までどおり読み込まれている（下層は画像を知らないまま）
     expect(usePartStore().definitions[IMAGE_TEMPLATE_ID]).toBeTruthy()
+    // 唯一の入口は残っている
+    expect(app.find('input[type="file"]').exists()).toBe(true)
+    expect(app.find('.materials__head').text()).toContain('素材を追加')
   })
 })
 
@@ -99,9 +109,23 @@ describe('保存するとインスタンスが増え、パートが生まれる�
     expect(store.parts.length - before).toBe(4)
     expect(parts.map((p) => p.form)).toEqual(['section', 'section', 'section', 'figure'])
     expect(parts[0]!.title).toBe('ためしの迷宮')
-    // 部屋由来の partId は `rooms:<要素id>`（添字ではない・P0 知見 2）
-    const roomIds = (instances[0]!.data.rooms as { id: string }[]).map((r) => r.id)
-    expect(parts.slice(1, 3).map((p) => p.partId)).toEqual(roomIds.map((id) => `rooms:${id}`))
+
+    // ⚠⚠ **期待値を保存されたデータから作らない**（台帳 A53）。
+    //   以前はここで `data.rooms.map(r => r.id)` を期待値にしていたため、
+    //   **要素 id を添字にする変異を当てても緑のまま**だった（＝検査になっていない）。
+    //   → 仕様（§1-4「配列由来は `<key>:<要素id>`」・`newItemId()` の形・P0 知見 2）から立て直す。
+    const roomPartIds = parts.slice(1, 3).map((p) => p.partId)
+    roomPartIds.forEach((partId, index) => {
+      expect(partId.startsWith('rooms:')).toBe(true)
+      const itemId = partId.slice('rooms:'.length)
+      // ⭐ 採番された id の形（`form.ts` の `newItemId()` が単一の真実）
+      expect(itemId).toMatch(/^item-/)
+      // ⭐ 添字ではない。⚠ 上の形の検査だけでは、連番を `item-` 風に見せる実装を通してしまう
+      expect(itemId).not.toBe(String(index))
+      expect(itemId).not.toBe(String(index + 1))
+    })
+    // 同じ id が 2 つの部屋に付いていない（付くと 2 件目の配置が 1 件目を指す）
+    expect(new Set(roomPartIds).size).toBe(2)
   })
 
   it('保存したものはリロードしても残る（IndexedDB へ書かれている）', async () => {

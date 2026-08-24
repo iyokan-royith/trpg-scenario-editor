@@ -127,7 +127,81 @@ export function createArrayItem(fields: FieldDef[]): ArrayItem {
 }
 
 /**
+ * ⭐ 下書きを保存してよいかを調べる（§1-3-1 の決定 4）。
+ *
+ * ⚠⚠ **黙って値を変えない**のが要点。`integer` に `3.5` が来たとき、
+ *   `Math.trunc` で `3` にするのは「利用者が打っていない値を保存する」ことであり、
+ *   この設計書が繰り返し警告している型である。→ **保存せず、何がいけないかを言う。**
+ *
+ * ⚠ 空欄（`null`）は誤りではない。未入力は `pruneEmpty` が書かないだけで、
+ *   ここで弾くと宣言側の既定値（`fieldRef.default`）へ行けなくなる（§1-6-10 の T0/E0）。
+ *
+ * ⚠ 出るのは**人が読む文**なので日本語・`label` で呼ぶ（§1-8-1 / §1-8-2c）。
+ *   入れ子と配列は「どこの話か」を前に積む——`もちもの 2 件目の「重さ」` のように
+ *   **場所が言えないと、画面のどの欄を直せばよいか分からない**。
+ *
+ * @param path 呼び出し側は渡さない（再帰で「ここまでの場所」を積むための引数）
+ * @returns 誤りの説明。**空配列なら保存してよい**
+ */
+export function validateDraft(
+  fields: FieldDef[],
+  draft: Record<string, unknown>,
+  path: string[] = [],
+): string[] {
+  const errors: string[] = []
+  const where = (label: string) =>
+    path.length === 0 ? `「${label}」` : `${path.join('')}の「${label}」`
+
+  for (const field of fields) {
+    const value = draft[field.key]
+    const label = labelOf(field)
+    switch (field.type) {
+      case 'integer': {
+        // 未入力（null / undefined / 空文字）は誤りではない。
+        if (value === null || value === undefined || value === '') break
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          errors.push(`${where(label)}は数で入れてください`)
+        } else if (!Number.isInteger(value)) {
+          errors.push(`${where(label)}は整数で入れてください（${value} は整数ではありません）`)
+        }
+        break
+      }
+      case 'object': {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) break
+        errors.push(
+          ...validateDraft(field.fields ?? [], value as Record<string, unknown>, [
+            ...path,
+            `「${label}」`,
+          ]),
+        )
+        break
+      }
+      case 'array': {
+        if (!Array.isArray(value)) break
+        value.forEach((item, index) => {
+          if (typeof item !== 'object' || item === null) return
+          errors.push(
+            ...validateDraft(field.fields ?? [], item as Record<string, unknown>, [
+              ...path,
+              // ⚠ 添字ではなく「何件目」。画面の `field__itemNo` と同じ数え方にする。
+              `${label} ${index + 1} 件目`,
+            ]),
+          )
+        })
+        break
+      }
+      default:
+        break
+    }
+  }
+  return errors
+}
+
+/**
  * ⭐ 下書きから `TemplateInstance.data` を作る。**空の入力は書かない。**
+ *
+ * ⚠ **ここは検証をしない。** 検証は `validateDraft()` の責務で、呼び手が**先に**通す。
+ *   ここで黙って落とすと「保存したのに値が無い」になり、弾いたことが誰にも伝わらない。
  *
  * ⚠⚠ **これは見た目の都合ではなく、既存の機構との契約である。**
  *   評価器は「フィールドが**無い**」ときに `fieldRef.default` を発火させる（§1-6-10 の T0/E0）。

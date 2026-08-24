@@ -243,3 +243,45 @@ describe('未対応の型があってもフォームが開ける（完了条件 
     expect(Object.keys(entrances[0]!)).toEqual(['id'])
   })
 })
+
+/**
+ * 整数の検証を**画面の経路で**通す（§1-3-1 の決定 4）。
+ *
+ * ⚠⚠ 純ロジックが緑でも、**フォームが `validateDraft()` を呼んでいなければ素通りする**
+ *   （実測: `.field--integer input` に `3.5` を打って保存すると `{ count: 3.5 }` が保存されていた）。
+ */
+describe('整数でない値は保存されない（§1-3-1 決定 4）', () => {
+  it('⭐ 小数を打って保存を押すと、保存されず、理由が画面に出る', async () => {
+    const wrapper = mountForm(ALL_BASIC)
+    await wrapper.find('.field--integer input').setValue('3.5')
+    await wrapper.find('form').trigger('submit')
+
+    // ⚠⚠ 保存されない（黙って 3 に切り詰めるのでも、3.5 のまま通すのでもない）
+    expect(wrapper.emitted('save')).toBeFalsy()
+    const errors = wrapper.find('.tform__errors')
+    expect(errors.exists()).toBe(true)
+    expect(errors.text()).toContain('整数')
+    expect(errors.text()).toContain('数') // label
+    // フォームは開いたまま（打った値を失わせない）
+    expect((wrapper.find('.field--integer input').element as HTMLInputElement).value).toBe('3.5')
+  })
+
+  it('整数へ直すと保存でき、知らせも消える（弾きっぱなしにならない）', async () => {
+    const wrapper = mountForm(ALL_BASIC)
+    await wrapper.find('.field--integer input').setValue('3.5')
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.find('.tform__errors').exists()).toBe(true)
+
+    await wrapper.find('.field--integer input').setValue('4')
+    const data = await save(wrapper)
+    expect(data.count).toBe(4)
+    expect(wrapper.find('.tform__errors').exists()).toBe(false)
+  })
+
+  it('空欄は弾かない（未入力は誤りではない・`fieldRef.default` の経路を殺さない）', async () => {
+    const wrapper = mountForm(ALL_BASIC)
+    await wrapper.find('.field--integer input').setValue('')
+    const data = await save(wrapper)
+    expect('count' in data).toBe(false)
+  })
+})

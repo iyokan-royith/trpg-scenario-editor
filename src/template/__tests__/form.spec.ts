@@ -18,6 +18,7 @@ import {
   labelOf,
   newItemId,
   pruneEmpty,
+  validateDraft,
 } from '../form'
 
 /** 基本型 7 種＋未対応型を 1 つ混ぜた定義（この切れ目の全域）。 */
@@ -162,5 +163,61 @@ describe('保存する値（pruneEmpty）', () => {
     const b = createArrayItem(itemFields)
     const data = pruneEmpty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), items: [a, b] })
     expect(data.items).toEqual([{ id: a.id, name: 'なわ' }, { id: b.id }])
+  })
+})
+
+/**
+ * 整数の検証（DESIGN-v0.md §1-3-1 の決定 4）。
+ *
+ * ⚠⚠ **黙って切り捨てない**（`Math.trunc` は「黙って値を変える」型）。
+ *   保存の手前で弾き、**何がいけないかを人の言葉で言う**。
+ */
+describe('整数でない値は保存の手前で弾く（§1-3-1 決定 4）', () => {
+  it('整数はそのまま通る（弾きすぎていないことの陽性対照）', () => {
+    for (const value of [0, 3, -7, null]) {
+      expect(validateDraft(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), count: value })).toEqual(
+        [],
+      )
+    }
+  })
+
+  it('⭐ 小数は弾かれ、表示名つきで知らせる（切り捨てない）', () => {
+    const errors = validateDraft(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), count: 3.5 })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('数') // ⚠ label（`count` ではない・§1-8-1）
+    expect(errors[0]).toContain('整数')
+    // ⚠ 内部の識別子を画面に出さない（§1-8-2c）
+    expect(errors[0]).not.toContain('count')
+  })
+
+  it('入れ子の中でも弾く（再帰が 2 段目で切れていない）', () => {
+    const fields: FieldDef[] = [
+      {
+        key: 'nest',
+        type: 'object',
+        label: '全体',
+        fields: [{ key: 'level', type: 'integer', label: 'レベル' }],
+      },
+    ]
+    const errors = validateDraft(fields, { nest: { level: 1.5 } })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('全体')
+    expect(errors[0]).toContain('レベル')
+  })
+
+  it('⭐ 配列の要素は「何件目か」まで言う（どの行が悪いか分からないと直せない）', () => {
+    const itemFields = BASIC_FIELDS[6]!.fields!
+    const ok = createArrayItem(itemFields)
+    ok.weight = 2
+    const ng = createArrayItem(itemFields)
+    ng.weight = 2.25
+    const errors = validateDraft(BASIC_FIELDS, {
+      ...createDraft(BASIC_FIELDS),
+      items: [ok, ng],
+    })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('もちもの')
+    expect(errors[0]).toContain('2') // 2 件目
+    expect(errors[0]).toContain('重さ')
   })
 })

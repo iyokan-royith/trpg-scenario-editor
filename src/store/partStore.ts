@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
   derivePartsOf,
+  imageFieldKeyOf,
   partKeyOf,
   type Part,
   type TemplateDefinition,
@@ -109,15 +110,33 @@ export const usePartStore = defineStore('parts', () => {
   }
 
   /**
+   * そのインスタンスの差し替え可能な画像フィールドのキー（無ければ undefined）。
+   * ⚠ 宣言（定義の `fields`）に聞く。**インスタンスに実体が入っているかは見ない**——
+   *   まだ 1 枚も入れていない素材にも「差し替え」は出てよい。
+   */
+  function imageFieldKeyOfInstance(instanceId: string): string | undefined {
+    const instance = instances.value[instanceId]
+    const def = instance && definitions.value[instance.templateId]
+    return def ? imageFieldKeyOf(def) : undefined
+  }
+
+  /**
    * 画像フィールドを差し替える（同じインスタンスなので、置かれた全箇所が同時に変わる）。
    * ⚠ **保存はしない。** 呼び手が返り値を `saveInstance()` へ渡すこと
    *   （保存の責務をストアへ持ち込むと、テストのたびに IndexedDB が要る）。
-   * @returns 差し替え後のインスタンス。対象が無ければ undefined
+   *
+   * ⚠⚠ **書き込み先は定義から引く**（`IMAGE_KEY` を決め打ちしない）。
+   *   決め打ちだと、画像欄を持たない素材（迷宮マップ等）にも実体を書き込めてしまい、
+   *   **画面には何も起きないのに保存だけされる**。UI 側の出し分けが緩んでも、ここで止まる。
+   *
+   * @returns 差し替え後のインスタンス。対象が無い／画像欄を持たない定義なら undefined
    */
   function replaceImage(instanceId: string, file: Blob): TemplateInstance | undefined {
     const instance = instances.value[instanceId]
     if (!instance) return undefined
-    instance.images = { ...instance.images, [IMAGE_KEY]: file }
+    const key = imageFieldKeyOfInstance(instanceId)
+    if (!key) return undefined
+    instance.images = { ...instance.images, [key]: file }
     return instance
   }
 
@@ -134,6 +153,7 @@ export const usePartStore = defineStore('parts', () => {
     registerBundledTemplates,
     createInstance,
     addImage,
+    imageFieldKeyOfInstance,
     replaceImage,
   }
 })

@@ -17,6 +17,8 @@ const props = defineProps<{
   parts: Part[]
   /** まだ本文に置かれていないパートのキー（`analyzePlacement().unplaced` 由来） */
   unplacedKeys: string[]
+  /** 「差し替え」を出してよい素材（＝定義に画像欄がある）の instanceId */
+  replaceableInstanceIds: string[]
 }>()
 
 const emit = defineEmits<{
@@ -50,6 +52,46 @@ function isUnplaced(part: Part): boolean {
 const visibleParts = computed(() =>
   onlyUnplaced.value ? props.parts.filter(isUnplaced) : props.parts,
 )
+
+/**
+ * ⭐⭐ **行はパート単位だが、「消す」「差し替え」は素材（インスタンス）単位の操作である。**
+ *
+ * ⚠ 素材一覧に並ぶのが画像だけだった間は「1 インスタンス＝1 パート」が**事実として**成立しており、
+ *   この食い違いは画面から到達できなかった。テンプレのフォームが入って初めて
+ *   **4 行に同じ「消す」が並び、どれを押しても 4 行すべて消える**状態になった。
+ *   → **素材あたり 1 つに畳み、消える件数を押す前に見せる。**
+ *
+ * ⚠ 「素材の 1 行目」ではなく「**いま見えている中の 1 行目**」に付ける。
+ *   絞り込み（未配置だけ）で先頭が隠れると、その素材を消す手段が消えてしまうため。
+ */
+const headKeys = computed(() => {
+  const seen = new Set<string>()
+  const keys = new Set<string>()
+  for (const part of visibleParts.value) {
+    if (seen.has(part.instanceId)) continue
+    seen.add(part.instanceId)
+    keys.add(partKeyOf(part.instanceId, part.partId))
+  }
+  return keys
+})
+
+function isInstanceHead(part: Part): boolean {
+  return headKeys.value.has(partKeyOf(part.instanceId, part.partId))
+}
+
+/**
+ * その素材が持つパートの数。
+ * ⚠ **見えている数ではなく全部の数**を数える。消えるのは絞り込みの外のパートも含む全部だから。
+ */
+function partCountOf(part: Part): number {
+  return props.parts.filter((p) => p.instanceId === part.instanceId).length
+}
+
+const replaceableSet = computed(() => new Set(props.replaceableInstanceIds))
+
+function canReplace(part: Part): boolean {
+  return replaceableSet.value.has(part.instanceId)
+}
 </script>
 
 <template>
@@ -61,7 +103,8 @@ const visibleParts = computed(() =>
       <p class="materials__count">未配置 {{ unplacedKeys.length }} 件</p>
       <label class="materials__filter">
         <input v-model="onlyUnplaced" type="checkbox" />
-        onlyUnplaced
+        <!-- ⚠ 内部の名前（`onlyUnplaced`）がそのまま出ていた。識別子は英語・**画面は日本語**（§1-8-1） -->
+        未配置だけ
       </label>
     </div>
     <p v-if="visibleParts.length === 0" class="materials__empty">素材はまだありません</p>
@@ -76,10 +119,20 @@ const visibleParts = computed(() =>
         <span class="materials__title">{{ part.title }}</span>
         <span class="materials__form">{{ FORM_LABELS[part.form] }}</span>
         <span class="materials__note">{{ inlineText(part.body) }}</span>
+        <!-- ⚠ 挿入だけがパート単位の操作。だから全部の行に出る -->
         <button type="button" @click="emit('insert', part)">本文へ挿入</button>
-        <!-- ⚠ 差し替えは**本文に触らない**。置かれている全箇所が同時に変わる（S7-3） -->
-        <button type="button" @click="emit('replace', part)">差し替え</button>
-        <button type="button" @click="emit('remove', part)">消す</button>
+        <!-- ⚠ 以下は**素材単位**の操作なので、素材あたり 1 行にしか出さない（上の headKeys を参照） -->
+        <template v-if="isInstanceHead(part)">
+          <!-- ⚠ 差し替えは**本文に触らない**。置かれている全箇所が同時に変わる（S7-3）。
+               画像欄を持たない素材には出さない（出すと実体の行き先が無い） -->
+          <button v-if="canReplace(part)" type="button" @click="emit('replace', part)">
+            差し替え
+          </button>
+          <!-- ⚠⚠ 消えるのは素材まるごと。パートが 2 つ以上あるときは**押す前に**件数を言う -->
+          <button type="button" @click="emit('remove', part)">
+            {{ partCountOf(part) > 1 ? `素材ごと消す（パート ${partCountOf(part)} 件）` : '消す' }}
+          </button>
+        </template>
       </li>
     </ul>
   </aside>
