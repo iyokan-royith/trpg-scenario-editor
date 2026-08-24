@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { EditorContent, type Editor } from '@tiptap/vue-3'
 import { createDocumentEditor } from './document/editor'
 import { flattenOutline, outline } from './document/outline'
@@ -103,10 +103,85 @@ const centerTabs = computed<CenterTab[]>(() => {
   return tabs
 })
 
-/** テンプレを選んだ＝中央にフォームのタブを開く（§1-9-5 の #1）。 */
-function onSelectTemplate(def: TemplateDefinition) {
+/**
+ * ⭐⭐ **打った下書きが失われる操作**（§1-9-3a・ロイス「確認は逐一出しましょう」）。
+ *
+ * ⚠⚠ **確認は「何を聞いたか」ではなく「何をするか」を持つ。**
+ *   `pendingAction` に**実行する操作そのもの**を入れ、承諾したらそれを走らせる——
+ *   こうすると「帯に出ている文と、押したときに起きること」が構造的にずれない。
+ *   経路が 3 つに増えたので、文言と処理を別々に持つと取り違えが起きうる。
+ *
+ * ⚠ 帯が出ている最中に別の経路を踏んだら、**後から踏んだ方で置き換える**
+ *   （どちらも同じ下書きを捨てる操作なので、最後の意思を残すのが素直）。
+ *   ⚠ 「出ている間は無視する」にすると、押しても何も起きない画面になる。
+ */
+type PendingAction = { kind: 'closeForm' } | { kind: 'switchTemplate'; def: TemplateDefinition }
+
+const pendingAction = ref<PendingAction | null>(null)
+
+/** 帯に出す文。⚠ 何が失われるかを先に言う（「よろしいですか」だけでは判断できない）。 */
+const pendingMessage = computed(() => {
+  switch (pendingAction.value?.kind) {
+    case 'closeForm':
+      return '打ちかけの内容があります。捨ててフォームを閉じますか？'
+    case 'switchTemplate':
+      return '打ちかけの内容があります。捨てて別のテンプレートを開きますか？'
+    default:
+      return ''
+  }
+})
+
+/**
+ * 下書きを失う操作の入口はここ 1 本（§1-9-3a）。
+ * ⚠⚠ **下書きが空なら聞かない。** 確認は「失われるものがあるとき」だけ意味を持つ——
+ *   毎回出すと読まずに押す操作になって、機能そのものが死ぬ。
+ */
+function requestDestructive(action: PendingAction) {
+  if (!formDirty.value) {
+    runDestructive(action)
+    return
+  }
+  pendingAction.value = action
+}
+
+function runDestructive(action: PendingAction) {
+  pendingAction.value = null
+  if (action.kind === 'closeForm') closeFormTab()
+  else openTemplateForm(action.def)
+}
+
+function onConfirmYes() {
+  const action = pendingAction.value
+  if (action) runDestructive(action)
+}
+
+/**
+ * ⚠ 下書きが空になったら問いも畳む（打ちかけを自分で消した等）。
+ *   残すと「もう無いものを捨てますか」と聞き続ける＝押しても何も起きないボタンになる。
+ */
+watch(formDirty, (dirty) => {
+  if (!dirty) pendingAction.value = null
+})
+
+function openTemplateForm(def: TemplateDefinition) {
   selectedTemplate.value = def
   activeTabId.value = FORM_TAB_ID
+}
+
+/**
+ * テンプレを選んだ＝中央にフォームのタブを開く（§1-9-5 の #1）。
+ *
+ * ⚠⚠ **選び直しは下書きを捨てる操作である**（`TemplateForm` が `def.id` の変化で作り直すため）。
+ *   §1-9-3 は当初「既存動作なので変更しない」としていたが、**確認なしで消える穴として残った**
+ *   （台帳 A55）。→ ✕ と同じ規則に載せる。
+ */
+function onSelectTemplate(def: TemplateDefinition) {
+  // ⚠ 同じテンプレをもう一度選んでも下書きは作り直されない＝失うものが無い。聞かずに開く。
+  if (selectedTemplate.value?.id === def.id) {
+    activeTabId.value = FORM_TAB_ID
+    return
+  }
+  requestDestructive({ kind: 'switchTemplate', def })
 }
 
 /**
@@ -118,11 +193,23 @@ function onSelectTemplate(def: TemplateDefinition) {
 function closeFormTab() {
   selectedTemplate.value = null
   formDirty.value = false
+  // ⚠ 別経路（保存など）で閉じたときに問いが宙に浮かないよう、ここでも畳む。
+  pendingAction.value = null
   activeTabId.value = BODY_TAB_ID
 }
 
+/** タブの ✕（§1-9-3a の 1 経路目）。 */
 function onCloseTab(tabId: string) {
-  if (tabId === FORM_TAB_ID) closeFormTab()
+  if (tabId === FORM_TAB_ID) requestDestructive({ kind: 'closeForm' })
+}
+
+/**
+ * フォームの「やめる」（§1-9-3a の 3 経路目）。
+ * ⚠⚠ **✕ と同じ操作なので、同じ入口を通す。** 片方だけ確認すると、
+ *   いま塞いだばかりの非対称をそのまま作り直すことになる。
+ */
+function onFormCancel() {
+  requestDestructive({ kind: 'closeForm' })
 }
 
 /**
@@ -490,6 +577,16 @@ async function importMd() {
       </div>
     </header>
     <p v-if="notice" class="app__notice" role="status">{{ notice }}</p>
+    <!-- ⚠ 下書きを失う操作の確認（§1-9-3a）。ブラウザ既定の `confirm()` は使わない——
+         このアプリの知らせは画面内の帯なので、ここだけ OS の窓を開くと
+         「止まったときに何が出るか」が別物になる。 -->
+    <p v-if="pendingAction" class="app__confirm" role="alert">
+      <span class="app__confirmText">{{ pendingMessage }}</span>
+      <button type="button" class="app__confirmYes" @click="onConfirmYes">捨てて続ける</button>
+      <button type="button" class="app__confirmNo" @click="pendingAction = null">
+        やっぱりやめる
+      </button>
+    </p>
     <div class="app__body">
       <OutlinePane
         class="app__outline"
@@ -522,7 +619,7 @@ async function importMd() {
               v-if="selectedTemplate"
               :def="selectedTemplate"
               @save="onFormSave"
-              @cancel="closeFormTab"
+              @cancel="onFormCancel"
               @update:dirty="formDirty = $event"
             />
           </template>
@@ -587,6 +684,16 @@ async function importMd() {
   margin: 0;
   padding: 0.25rem 1rem;
   background: #fff6d5;
+  font-size: 0.9rem;
+}
+.app__confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.3rem 1rem;
+  background: #fff1f0;
+  border-bottom: 1px solid #f0b7b2;
   font-size: 0.9rem;
 }
 .app__body {

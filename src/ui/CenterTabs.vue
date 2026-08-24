@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
 import type { CenterTab } from './centerTabs'
 
 /**
@@ -16,48 +15,15 @@ import type { CenterTab } from './centerTabs'
  * ⚠ ここは「何のタブか」を知らない。本文もフォームも同じ扱いで、
  *   中身は名前付きスロット（`id` と同名）で外から差し込む。
  */
-const props = defineProps<{ tabs: CenterTab[]; activeId: string }>()
+defineProps<{ tabs: CenterTab[]; activeId: string }>()
 const emit = defineEmits<{ select: [tabId: string]; close: [tabId: string] }>()
 
-/**
- * ✕ を押したが、下書きが残っているので一度確認している最中のタブ（§1-9-2「✕ は下書きが
- * 残っていれば一度確認する」）。
- *
- * ⚠ ブラウザ既定の `confirm()` は使わない。このアプリは知らせを画面内の帯で出しており
- *   （`app__notice`）、ここだけ OS の窓を開くと**止まったときに何が出るか**が別物になる。
- */
-const closeConfirmId = ref<string | null>(null)
-
-/**
- * 確認中のタブが消えた／下書きが空になったら、問いも畳む。
- * ⚠ 残すと「もう無いものを捨てますか」と聞き続ける（押しても何も起きないボタンになる）。
- */
-watch(
-  () => props.tabs,
-  (tabs) => {
-    const target = tabs.find((tab) => tab.id === closeConfirmId.value)
-    if (!target || !target.dirty) closeConfirmId.value = null
-  },
-  { deep: true },
-)
-
-const confirmingLabel = computed(
-  () => props.tabs.find((tab) => tab.id === closeConfirmId.value)?.label ?? '',
-)
-
 function onCloseClick(tab: CenterTab) {
-  // ⚠ 下書きが無いときは聞かない。毎回聞くと問いが読まれなくなる。
-  if (!tab.dirty) {
-    emit('close', tab.id)
-    return
-  }
-  closeConfirmId.value = tab.id
-}
-
-function onConfirmClose() {
-  const tabId = closeConfirmId.value
-  closeConfirmId.value = null
-  if (tabId !== null) emit('close', tabId)
+  // ⚠⚠ **ここでは確認しない。** 下書きを失う操作の確認は `App.vue` が 1 箇所で持つ
+  //   （§1-9-3a: ✕ ／別のテンプレを選び直す ／やめる の 3 経路で同じ規則）。
+  //   器の側に持たせると、器を通らない経路（選び直し）だけ規則から漏れる——
+  //   実際それが台帳 A55 として見つかった穴だった。
+  emit('close', tab.id)
 }
 </script>
 
@@ -93,15 +59,6 @@ function onConfirmClose() {
         </button>
       </div>
     </div>
-    <p v-if="closeConfirmId !== null" class="tabs__confirm" role="alert">
-      <span class="tabs__confirmText"
-        >「{{ confirmingLabel }}」には打ちかけの内容があります。捨てて閉じますか？</span
-      >
-      <button type="button" class="tabs__confirmYes" @click="onConfirmClose">捨てて閉じる</button>
-      <button type="button" class="tabs__confirmNo" @click="closeConfirmId = null">
-        閉じるのをやめる
-      </button>
-    </p>
     <!-- ⚠⚠ `v-show`。ここを `v-if` にすると下書きが消える（このファイルの冒頭を読むこと） -->
     <div
       v-for="tab in tabs"
@@ -159,16 +116,6 @@ function onConfirmClose() {
   border: none;
   cursor: pointer;
   color: #666;
-}
-.tabs__confirm {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0.3rem 0.6rem;
-  background: #fff1f0;
-  border-bottom: 1px solid #f0b7b2;
-  font-size: 0.85rem;
 }
 .tabs__panel {
   flex: 1;
