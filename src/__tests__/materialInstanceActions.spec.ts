@@ -83,6 +83,30 @@ function buttonTextsOf(index: number): string[] {
     .map((b) => b.text())
 }
 
+/**
+ * ⚠⚠ **保存（IndexedDB への書き込み）が届くまで待つ。**
+ *   押した直後の `flushPromises()` では**まだ着地していない**ことがあり、
+ *   その書き込みは**次のテストの `clearInstances()` の後に着地して混ざる**
+ *   （＝前のテストの素材が、次のテストの起動時に読み戻される）。
+ *   ⚠ このファイルは既に同じ罠を1度踏んでいる（先頭の警告を参照）。**状態でなく遷移で待つ。**
+ */
+async function waitForSaved(check: (list: Awaited<ReturnType<typeof loadInstances>>) => boolean) {
+  for (let i = 0; i < 50; i += 1) {
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    if (check(await loadInstances())) return
+  }
+  throw new Error('保存が届きませんでした')
+}
+
+/** その素材の「素材単位の操作」が出ている行（＝いま見えている中の 1 行目・§1-3-2 R2）。 */
+function rowIndexOfInstanceHead(nth: number): number {
+  const heads = rows()
+    .map((row, index) => ({ index, hasEdit: row.findAll('button').some((b) => b.text() === '編集') }))
+    .filter((r) => r.hasEdit)
+  return heads[nth]!.index
+}
+
 function buttonIn(index: number, startsWith: string) {
   return rows()
     [index]!.findAll('button')
@@ -92,6 +116,10 @@ function buttonIn(index: number, startsWith: string) {
 /** 迷宮マップを 1 件作る（部屋 2 件 → 1＋2＋1 = 4 パート）。 */
 async function createDungeonWithTwoRooms(name: string) {
   const app = wrapper!
+  // ⚠⚠ **状態（1 件以上ある）ではなく遷移（1 件増えた）で待つ。**
+  //   「0 件より多い」で待つと、**2 件目を作るときに即座に返ってしまい**、
+  //   書き込みが次のテストの `clearInstances()` の後に着地する（＝前のテストの素材が混ざる）。
+  const before = (await loadInstances()).length
   await app
     .findAll('.tpane__item')
     .find((b) => b.text() === '迷宮マップ')!
@@ -111,7 +139,7 @@ async function createDungeonWithTwoRooms(name: string) {
   for (let i = 0; i < 50; i += 1) {
     await flushPromises()
     await new Promise((resolve) => setTimeout(resolve, 0))
-    if ((await loadInstances()).length > 0) return
+    if ((await loadInstances()).length > before) return
   }
   throw new Error('保存が届きませんでした')
 }
@@ -244,5 +272,133 @@ describe('左ツリーで「章として扱う素材」が見分けられる（�
     expect(wrapper!.findAll('.outline__item[data-kind="partRef"]')).toHaveLength(0)
     // ⚠ 陽性対照: 置いた参照は本文には在る（＝「出ない」が挿入失敗ではない）
     expect(collectPlacedRefs(editorOf().state.doc)).toHaveLength(1)
+  })
+})
+
+/**
+ * ⭐⭐ 生成済み素材の編集（DESIGN-v0.md §1-11・要望B）。
+ *
+ * ⚠⚠ **本命は「直して保存しても、本文に置いた参照が行方不明にならない」**（合格条件 #2）。
+ *   これが破れる壊れ方は**例外を出さない**——画面には「行方不明のパート」が並ぶだけで、
+ *   保存も成功したように見える。
+ */
+describe('生成済み素材を編集できる（§1-11・要望B）', () => {
+  /** 素材一覧の「編集」を押す。⚠ 位置ではなく**文字**で探す（素材単位の操作は増える）。 */
+  async function clickEdit(row = 0) {
+    await buttonIn(row, '編集')!.trigger('click')
+    await flushPromises()
+  }
+
+  it('⭐ 合格条件#1: 開くと保存された値が入った状態でフォームが出る', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    await clickEdit()
+
+    const form = wrapper!.find('form.tform')
+    expect(form.exists()).toBe(true)
+    // ⚠ タブ名で「編集中」と分かる（新規と同じ名前だと、どちらを保存するのか分からない）
+    expect(wrapper!.find('.tabs').text()).toContain('（編集）')
+    // 全体.マップ名（`object` の中の `string`）に、保存された値が入っている
+    expect((form.find('.field--object .field--string input').element as HTMLInputElement).value).toBe(
+      'ためしの迷宮',
+    )
+    // 部屋が 2 件ぶん復元されている（空のフォームではない）
+    const rooms = form
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('部屋'))!
+    expect(rooms.findAll('.field__item')).toHaveLength(2)
+    expect(rooms.find('legend').text()).toContain('2 件')
+  })
+
+  it('⭐⭐⭐ 合格条件#2: 直して保存しても、本文に置いた参照が行方不明にならない', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    const store = usePartStore()
+    // 部屋のパートを 2 つとも本文へ置く
+    await insertFromRow(1)
+    await insertFromRow(2)
+    const placedBefore = collectPlacedRefs(editorOf().state.doc).map((r) => r.partId)
+    const instanceIdBefore = Object.values(store.instances)[0]!.id
+
+    await clickEdit()
+    // 名前だけ直す（部屋には触らない）
+    await wrapper!.find('form.tform .field--object .field--string input').setValue('なおした迷宮')
+    await wrapper!.find('form.tform').trigger('submit')
+    await waitForSaved((list) => (list[0]?.data.overview as { name?: string })?.name === 'なおした迷宮')
+
+    // ⚠⚠ ここが本命。id が作り直されていたら、置いた参照が全部「行方不明のパート」になる。
+    expect(wrapper!.findAll('.part-ref__missing')).toHaveLength(0)
+    const partIds = store.parts.map((p) => p.partId)
+    for (const placed of placedBefore) expect(partIds).toContain(placed)
+    // インスタンスも増えていない（新規で保存し直していない）
+    expect(Object.keys(store.instances)).toHaveLength(1)
+    expect(Object.values(store.instances)[0]!.id).toBe(instanceIdBefore)
+    // 直した値は保存されている（リロード相当）
+    const saved = await loadInstances()
+    expect((saved[0]!.data.overview as { name: string }).name).toBe('なおした迷宮')
+    // ⚠ 知らせは「作った」ではなく「更新した」（新規と編集は見分けが付かないと上書きの事故になる）
+    expect(wrapper!.find('.app__notice').text()).toContain('素材を更新しました')
+  })
+
+  it('⭐ 合格条件#4: 編集で配列要素を消すと、置かれていた参照はアラートで見える（既存機構）', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+    await insertFromRow(1) // 1 件目の部屋を本文へ
+    await insertFromRow(2) // 2 件目の部屋も本文へ
+
+    await clickEdit()
+    const rooms = wrapper!
+      .findAll('form.tform .field--array')
+      .find((f) => f.find('legend').text().startsWith('部屋'))!
+    // 1 件目を消してから保存
+    await rooms.findAll('.field__itemHead button')[0]!.trigger('click')
+    await wrapper!.find('form.tform').trigger('submit')
+    await waitForSaved((list) => ((list[0]?.data.rooms as unknown[]) ?? []).length === 1)
+
+    // ⚠ 消した要素の参照だけが行方不明になる（＝これは**正しい**・§1-11-1）。
+    expect(wrapper!.findAll('.part-ref__missing')).toHaveLength(1)
+    // ⚠⚠ 残した方は無事（＝「消したから全部消えた」ではない）
+    expect(usePartStore().parts.filter((p) => p.partId.startsWith('rooms:'))).toHaveLength(1)
+  })
+
+  it('⭐⭐ 別の素材を編集で開くと、その素材の値に入れ替わる（前の中身が残らない）', async () => {
+    // ⚠⚠ **フォームは開いた時に 1 度だけ初期値を読む**ので、作り直す単位に編集対象が
+    //   入っていないと、**同じ定義の別の素材を開いたときに前の中身が残る**
+    //   （画面には「ひとつめ」と出たまま、保存すると「ふたつめ」を上書きする＝最悪の形）。
+    await mountApp()
+    await createDungeonWithTwoRooms('ひとつめ')
+    await createDungeonWithTwoRooms('ふたつめ')
+
+    const nameInForm = () =>
+      (wrapper!.find('form.tform .field--object .field--string input').element as HTMLInputElement)
+        .value
+
+    await clickEdit(rowIndexOfInstanceHead(0))
+    const first = nameInForm()
+    await clickEdit(rowIndexOfInstanceHead(1))
+    const second = nameInForm()
+
+    expect(new Set([first, second])).toEqual(new Set(['ひとつめ', 'ふたつめ']))
+    expect(first).not.toBe(second)
+  })
+
+  it('⭐ 合格条件#5: 編集中に別の素材を開こうとすると確認が出る（§1-9-3a の 4 経路目）', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ひとつめ')
+    await createDungeonWithTwoRooms('ふたつめ')
+
+    await clickEdit(0)
+    // ⚠ 開いただけでは「打ちかけ」ではない（確認は出ない）
+    await buttonIn(rowIndexOfInstanceHead(1), '編集')!.trigger('click')
+    await flushPromises()
+    expect(wrapper!.find('.app__confirm').exists()).toBe(false)
+
+    // 何か打ってから、もう一度別の素材を開く
+    await wrapper!.find('form.tform .field--object .field--string input').setValue('うちかけ')
+    await buttonIn(0, '編集')!.trigger('click')
+    await flushPromises()
+    const confirm = wrapper!.find('.app__confirm')
+    expect(confirm.exists()).toBe(true)
+    expect(confirm.text()).toContain('別の素材を編集')
   })
 })

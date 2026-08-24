@@ -29,6 +29,7 @@ import {
   PART_REF_NODE,
 } from './document/partRefExtension'
 import { legacyImagePartIdRemap, IMAGE_TEMPLATE_ID } from './template/render/image'
+import { draftFromInstance } from './template/form'
 import {
   partKeyOf,
   type Part,
@@ -86,8 +87,24 @@ const FORM_TAB_ID = 'form'
 
 /** いま開いているテンプレのフォーム（`null` ならフォームのタブは無い）。 */
 const selectedTemplate = ref<TemplateDefinition | null>(null)
-/** フォームの下書きに値が入っているか。⚠ 判定はフォーム側（`isDraftDirty`）。 */
+/** フォームの下書きに値が入っているか。⚠ 判定はフォーム側（新規＝空と違うか／編集＝開いた時と違うか）。 */
 const formDirty = ref(false)
+
+/**
+ * ⭐ いま**編集**している素材（`null` なら新規作成）。§1-11。
+ * ⚠ フォームの中身は開いた時に 1 度だけ作る（`initialDraft`）。以後は `TemplateForm` が持つ。
+ */
+const editingInstanceId = ref<string | null>(null)
+const initialDraft = ref<Record<string, unknown> | null>(null)
+
+/**
+ * ⚠⚠ **フォームを作り直す単位**。同じテンプレでも「新規」と「素材Aの編集」と「素材Bの編集」は別物で、
+ *   `def.id` だけを見ると**中身が前のまま残る**（`TemplateForm` の作り直しは `def.id` 変化が契機）。
+ *   → `:key` に使って**開き直すたびに作り直す**。
+ */
+const formKey = computed(() =>
+  editingInstanceId.value ? `edit:${editingInstanceId.value}` : `new:${selectedTemplate.value?.id ?? ''}`,
+)
 const activeTabId = ref<string>(BODY_TAB_ID)
 
 /**
@@ -98,7 +115,13 @@ const centerTabs = computed<CenterTab[]>(() => {
   const tabs: CenterTab[] = [{ id: BODY_TAB_ID, label: '本文' }]
   const def = selectedTemplate.value
   if (def) {
-    tabs.push({ id: FORM_TAB_ID, label: def.name, closable: true, dirty: formDirty.value })
+    // ⚠ 編集中は名前で分かるようにする（新規と編集は見分けが付かないと、上書きの事故になる）
+    tabs.push({
+      id: FORM_TAB_ID,
+      label: editingInstanceId.value ? `${def.name}（編集）` : def.name,
+      closable: true,
+      dirty: formDirty.value,
+    })
   }
   return tabs
 })
@@ -115,7 +138,11 @@ const centerTabs = computed<CenterTab[]>(() => {
  *   （どちらも同じ下書きを捨てる操作なので、最後の意思を残すのが素直）。
  *   ⚠ 「出ている間は無視する」にすると、押しても何も起きない画面になる。
  */
-type PendingAction = { kind: 'closeForm' } | { kind: 'switchTemplate'; def: TemplateDefinition }
+type PendingAction =
+  | { kind: 'closeForm' }
+  | { kind: 'switchTemplate'; def: TemplateDefinition }
+  /** ⭐ 4 経路目（§1-11-5）: 編集で別の素材を開く。⚠ 新しい確認機構を作らず同じ入口に載せる */
+  | { kind: 'editInstance'; instanceId: string }
 
 const pendingAction = ref<PendingAction | null>(null)
 
@@ -126,6 +153,8 @@ const pendingMessage = computed(() => {
       return '打ちかけの内容があります。捨ててフォームを閉じますか？'
     case 'switchTemplate':
       return '打ちかけの内容があります。捨てて別のテンプレートを開きますか？'
+    case 'editInstance':
+      return '打ちかけの内容があります。捨てて別の素材を編集しますか？'
     default:
       return ''
   }
@@ -147,6 +176,7 @@ function requestDestructive(action: PendingAction) {
 function runDestructive(action: PendingAction) {
   pendingAction.value = null
   if (action.kind === 'closeForm') closeFormTab()
+  else if (action.kind === 'editInstance') openInstanceEditor(action.instanceId)
   else openTemplateForm(action.def)
 }
 
@@ -165,7 +195,34 @@ watch(formDirty, (dirty) => {
 
 function openTemplateForm(def: TemplateDefinition) {
   selectedTemplate.value = def
+  // ⚠ 新規で開くときは編集状態を落とす（残すと、次の保存が**別の素材を上書きする**）
+  editingInstanceId.value = null
+  initialDraft.value = null
   activeTabId.value = FORM_TAB_ID
+}
+
+/**
+ * ⭐⭐ 生成済み素材をフォームで開く（§1-11）。**入口は複数でよいが、経路はこの 1 本**（§1-11-5）。
+ *
+ * ⚠ 下書きは**開いた時に 1 度だけ**作る（`draftFromInstance`）。
+ *   ⚠⚠ **保存済みの `id` はここで持ち越される**——採番し直すと本文の参照が全部行方不明になる（§1-11-1）。
+ */
+function openInstanceEditor(instanceId: string) {
+  const instance = store.instances[instanceId]
+  const def = instance && store.definitions[instance.templateId]
+  if (!instance || !def) {
+    notice.value = 'その素材はもうありません'
+    return
+  }
+  selectedTemplate.value = def
+  editingInstanceId.value = instanceId
+  initialDraft.value = draftFromInstance(def.fields, instance.data, instance.images)
+  activeTabId.value = FORM_TAB_ID
+}
+
+/** 素材一覧の「編集」から。⚠ 下書きを失う操作なので、同じ 1 本の入口を通す（§1-9-3a の 4 経路目）。 */
+function onEditMaterial(part: Part) {
+  requestDestructive({ kind: 'editInstance', instanceId: part.instanceId })
 }
 
 /**
@@ -177,7 +234,9 @@ function openTemplateForm(def: TemplateDefinition) {
  */
 function onSelectTemplate(def: TemplateDefinition) {
   // ⚠ 同じテンプレをもう一度選んでも下書きは作り直されない＝失うものが無い。聞かずに開く。
-  if (selectedTemplate.value?.id === def.id) {
+  //   ⚠⚠ ただし**編集中は別**——同じ定義でも「素材の編集」から「新規作成」へ移るのは
+  //   下書きを捨てる操作である（近道に載せると、打った編集が確認なしで消える）。
+  if (editingInstanceId.value === null && selectedTemplate.value?.id === def.id) {
     activeTabId.value = FORM_TAB_ID
     return
   }
@@ -192,6 +251,8 @@ function onSelectTemplate(def: TemplateDefinition) {
  */
 function closeFormTab() {
   selectedTemplate.value = null
+  editingInstanceId.value = null
+  initialDraft.value = null
   formDirty.value = false
   // ⚠ 別経路（保存など）で閉じたときに問いが宙に浮かないよう、ここでも畳む。
   pendingAction.value = null
@@ -523,10 +584,36 @@ const replaceableInstanceIds = computed(() =>
 async function onFormSave(data: Record<string, unknown>, images: Record<string, Blob>) {
   const def = selectedTemplate.value
   if (!def) return
+  const editingId = editingInstanceId.value
   // ⚠ 先に閉じる（§1-9-5 の #5「保存でフォームのタブが閉じ、本文へ戻る」）。
   //   保存の成否を待ってから閉じると、書き込みが遅い環境で**押したのに閉じない**時間ができる。
   closeFormTab()
-  await onCreateFromTemplate(def.id, data, images)
+  if (editingId) await onUpdateInstance(editingId, data, images)
+  else await onCreateFromTemplate(def.id, data, images)
+}
+
+/**
+ * ⭐ 生成済み素材を上書き保存する（§1-11）。
+ * ⚠⚠ **新しいインスタンスを作らない。** 作ると本文の参照が全部行方不明になる。
+ */
+async function onUpdateInstance(
+  instanceId: string,
+  data: Record<string, unknown>,
+  images: Record<string, Blob>,
+) {
+  const instance = store.updateInstance(instanceId, data, images)
+  if (!instance) {
+    notice.value = 'その素材はもうありません'
+    return
+  }
+  try {
+    await saveInstance(instance)
+    notice.value = `素材を更新しました（パート ${store.partsOfInstance(instanceId).length} 件）`
+  } catch (error) {
+    notice.value = `素材を保存できませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
 }
 
 async function onCreateFromTemplate(
@@ -621,7 +708,9 @@ async function importMd() {
           <template #form>
             <TemplateForm
               v-if="selectedTemplate"
+              :key="formKey"
               :def="selectedTemplate"
+              :initialDraft="initialDraft"
               @save="onFormSave"
               @cancel="onFormCancel"
               @update:dirty="formDirty = $event"
@@ -646,6 +735,7 @@ async function importMd() {
           @addImage="onAddImage"
           @insert="onInsertMaterial"
           @replace="onReplaceMaterial"
+          @edit="onEditMaterial"
           @remove="onRemoveMaterial"
         />
       </div>

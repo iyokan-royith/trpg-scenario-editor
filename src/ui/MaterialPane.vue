@@ -26,6 +26,8 @@ const emit = defineEmits<{
   (e: 'insert', part: Part): void
   (e: 'replace', part: Part): void
   (e: 'remove', part: Part): void
+  /** ⭐ 生成済み素材をフォームで開く（§1-11・要望B）。⚠ **素材単位**の操作 */
+  (e: 'edit', part: Part): void
 }>()
 
 /**
@@ -129,6 +131,8 @@ function canReplace(part: Part): boolean {
             差し替え
           </button>
           <!-- ⚠⚠ 消えるのは素材まるごと。パートが 2 つ以上あるときは**押す前に**件数を言う -->
+          <!-- ⭐ 生成済み素材の編集（§1-11）。⚠ **素材単位**なので、この枠の中＝素材あたり 1 行だけ -->
+          <button type="button" @click="emit('edit', part)">編集</button>
           <button type="button" @click="emit('remove', part)">
             {{ partCountOf(part) > 1 ? `素材ごと消す（パート ${partCountOf(part)} 件）` : '消す' }}
           </button>

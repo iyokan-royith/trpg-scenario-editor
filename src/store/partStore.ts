@@ -116,6 +116,29 @@ export const usePartStore = defineStore('parts', () => {
   }
 
   /**
+   * ⭐⭐ 生成済み素材の中身を差し替える（DESIGN-v0.md §1-11・要望B）。
+   *
+   * ⚠⚠ **`id` と `templateId` は変えない。** 新しいインスタンスを作ると
+   *   **本文に置いた `partRef.instanceId` が全部行方不明になる**（§1-11-1 と同じ穴の、
+   *   インスタンス側の面）。⚠ 例外は出ない。
+   *
+   * ⚠ **保存はしない**（`createInstance` / `addImage` と同じ線。呼び手が `saveInstance()` へ渡す）。
+   *
+   * @returns 更新後のインスタンス。対象が無ければ undefined
+   */
+  function updateInstance(
+    instanceId: string,
+    data: Record<string, unknown>,
+    images: Record<string, Blob> = {},
+  ): TemplateInstance | undefined {
+    const instance = instances.value[instanceId]
+    if (!instance) return undefined
+    const updated: TemplateInstance = { ...instance, data, images }
+    upsertInstance(updated)
+    return updated
+  }
+
+  /**
    * そのインスタンスの差し替え可能な画像フィールドのキー（無ければ undefined）。
    * ⚠ 宣言（定義の `fields`）に聞く。**インスタンスに実体が入っているかは見ない**——
    *   まだ 1 枚も入れていない素材にも「差し替え」は出てよい。
@@ -158,6 +181,7 @@ export const usePartStore = defineStore('parts', () => {
     removeInstance,
     registerBundledTemplates,
     createInstance,
+    updateInstance,
     addImage,
     imageFieldKeyOfInstance,
     replaceImage,

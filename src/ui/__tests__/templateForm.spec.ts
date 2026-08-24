@@ -631,3 +631,38 @@ describe('判別子付き共用体が入力できる（§1-3-3 C 群）', () => 
     expect(wrapper.find('.tform__errors').text()).toContain('2 つとも')
   })
 })
+
+/**
+ * 編集で開いたときのフォーム（§1-11）。
+ * ⚠ ここで見るのは**フォーム単体の振る舞い**（App の配線は `__tests__/materialInstanceActions.spec.ts`）。
+ */
+describe('生成済み素材の編集（§1-11）', () => {
+  const initial = { title: 'ほぞんずみ', count: 3, secret: false, note: '', mood: '', nest: { inner: '' }, items: [] }
+
+  it('⭐ 保存済みの値が入った状態で開き、ボタンの文言が「保存する」になる', () => {
+    const wrapper = mount(TemplateForm, { props: { def: ALL_BASIC, initialDraft: initial } })
+    expect((wrapper.find('.field--string input').element as HTMLInputElement).value).toBe('ほぞんずみ')
+    // ⚠ 「素材にする」のは新規のときだけ（もう素材になっている）
+    expect(wrapper.find('button[type="submit"]').text()).toBe('保存する')
+  })
+
+  it('⭐⭐ 開いた直後は「打ちかけ」ではない（読み込んだ値は打った値ではない）', () => {
+    const wrapper = mount(TemplateForm, { props: { def: ALL_BASIC, initialDraft: initial } })
+    // ⚠⚠ ここが true になると、**何も触っていないのに確認が出る**＝確認が読まずに押すものになる
+    const events = wrapper.emitted('update:dirty')!
+    expect(events[events.length - 1]![0]).toBe(false)
+  })
+
+  it('1 文字でも直すと「打ちかけ」になる（陽性対照）', async () => {
+    const wrapper = mount(TemplateForm, { props: { def: ALL_BASIC, initialDraft: initial } })
+    await wrapper.find('.field--string input').setValue('なおした')
+    const events = wrapper.emitted('update:dirty')!
+    expect(events[events.length - 1]![0]).toBe(true)
+  })
+
+  it('新規（initialDraft 無し）では今までどおり空から始まり、文言も変わらない', () => {
+    const wrapper = mountForm(ALL_BASIC)
+    expect((wrapper.find('.field--string input').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('button[type="submit"]').text()).toBe('保存して素材にする')
+  })
+})

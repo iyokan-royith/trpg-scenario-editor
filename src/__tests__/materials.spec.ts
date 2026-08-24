@@ -225,7 +225,9 @@ describe('#3 同じ画像を 2 箇所に置ける。差し替えると両方変�
     expect(createdUrls).toHaveLength(2)
 
     // ⭐ 利用者の操作で差し替える（本文には一度も触らない）
-    await buttons()[1]!.trigger('click') // 「差し替え」
+    await buttons()
+      .find((b) => b.text() === '差し替え')!
+      .trigger('click') // ⚠ 位置ではなく文字で（上の注意を参照）
     await chooseImage(imageFile('いぬ.png', [9, 9]))
 
     const after = imageNodes().map((v) => v.attributes('src'))
@@ -255,7 +257,9 @@ describe('#3 同じ画像を 2 箇所に置ける。差し替えると両方変�
     await nextTick()
     const bodyBefore = JSON.stringify(editorOf().getJSON())
 
-    await buttons()[1]!.trigger('click')
+    await buttons()
+      .find((b) => b.text() === '差し替え')!
+      .trigger('click')
     await chooseImage(imageFile('いぬ.png', [9]))
 
     expect(JSON.stringify(editorOf().getJSON())).toBe(bodyBefore)
@@ -271,7 +275,11 @@ describe('#4 インスタンスを消すと、置かれていた参照につい�
     await buttons()[0]!.trigger('click') // もう 1 箇所
     await nextTick()
 
-    await buttons()[2]!.trigger('click') // 「消す」
+    // ⚠ **位置で拾わない**（素材単位の操作は増える——実際 §1-11 の「編集」が間に入って
+    //   `[2]` が別のボタンを指すようになった）。**文字で探す。**
+    await buttons()
+      .find((b) => b.text() === '消す')!
+      .trigger('click')
     await flushPromises()
     await nextTick()
 

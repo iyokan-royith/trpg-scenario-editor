@@ -585,3 +585,124 @@ export function collectImages(
   }
   return images
 }
+
+/**
+ * ⭐⭐ 保存済みインスタンス → 下書き（DESIGN-v0.md §1-11-2・**要望B の本体**）。
+ *
+ * ⚠⚠ **`createDraft()` を土台にして、保存済みの値を上書きする。**
+ *   保存済みデータから下書きを直接作ってはならない——
+ *   **定義が後から項目を増やしたとき、古いデータに無いキーの欄が画面から消える**（§1-11-6 の #3）。
+ *   土台を**定義側**から作れば、データ側の欠けは自動的に空欄になる。
+ *
+ * ⚠⚠⚠ **配列要素の `id` は保存済みのものをそのまま使う**（§1-11-1・**この変更の本丸**）。
+ *   `createArrayItem()` は**必ず新しく採番する**ので、ここで使うと
+ *   **本文に置いた `partRef`（`<key>:<要素id>`）が全部行方不明になる。⚠ 例外は出ない。**
+ *   ⚠ 「保つ」のは**同じ要素の id**であって、編集で要素を消したときに id が消えるのは正しい
+ *   （行方不明の参照が出て、S7-2 の既存アラートが拾う）。
+ *
+ * ⚠ **画像は `images` から戻す**（§1-11-4）。**`data` 側を見て「画像が無い」と判断しない**
+ *   ——実体は最初から `data` に無い（`col`/`column` で踏んだ「読む側と書く側で別の場所を見る」の同型）。
+ *
+ * ⚠ `oneOf` / `ref` は**保存済みの判別子で枝を引いてから**上書きする（§1-11-3）。
+ *   **選ばれていない枝は保存されていないので戻らない**——仕様どおり（§1-3-3c の契約の帰結）。
+ *
+ * ⚠ **定義に無いキーは下書きに載らない**＝保存し直すと消える。
+ *   `要検証[定義に無いキーを持つデータが実在すると分かったら、編集で消えてよいかを決める（現状は同梱サンプルに 0 件＝到達不能）]`
+ */
+export function draftFromInstance(
+  fields: readonly FieldDef[],
+  data: Record<string, unknown>,
+  images: Record<string, Blob> = {},
+): Record<string, unknown> {
+  const draft = createDraft(fields)
+  for (const field of fields) {
+    const saved = data[field.key]
+
+    if (field.type === 'image') {
+      // ⚠ 実体の在処は `images`。⚠⚠ `data[field.key]` は**常に空**なのでここを見ない。
+      const blob = images[field.key]
+      draft[field.key] = blob instanceof Blob ? blob : null
+      continue
+    }
+    if (field.tuple !== undefined) {
+      const items = tupleValues(field, saved)
+      draft[field.key] = items.map(
+        (item) => draftFromInstance([singularOf(field)], { [field.key]: item })[field.key],
+      )
+      continue
+    }
+    if (isVariantFieldType(field.type)) {
+      const record = asRecord(saved)
+      // ⚠ 判別子の値そのものは、知らない値でも載せる（`validateDraft` が「知らない種類」と言う）。
+      draft[field.key] = draftFromInstance(visibleFieldsOf(field, record), record)
+      continue
+    }
+    switch (field.type) {
+      case 'string':
+      case 'text':
+      case 'enum':
+      case 'direction':
+        if (typeof saved === 'string') draft[field.key] = saved
+        break
+      case 'integer':
+        if (typeof saved === 'number') draft[field.key] = saved
+        break
+      case 'boolean':
+        draft[field.key] = saved === true
+        break
+      case 'array': {
+        if (!Array.isArray(saved)) break
+        draft[field.key] = saved.map((item) => {
+          const record = asRecord(item)
+          return {
+            ...draftFromInstance(childFieldsOf(field), record),
+            // ⚠⚠⚠ **ここが本丸**。保存済みの id をそのまま持ち越す。
+            //   ⚠ 採番し直すと、本文の参照が黙って別のもの（または無いもの）を指す。
+            //   ⚠ id を持たない古いデータだけは、ここで初めて採番する（指せる先が無いため）。
+            [ITEM_ID_KEY]: typeof record[ITEM_ID_KEY] === 'string' ? record[ITEM_ID_KEY] : newItemId(),
+          }
+        })
+        break
+      }
+      case 'object':
+      case 'coordinate':
+      case 'edgeRef':
+        draft[field.key] = draftFromInstance(childFieldsOf(field), asRecord(saved))
+        break
+      default:
+        // 尋ねない型（`derived`）は下書きにキーを作らない（`blankValueOf` と同じ線）。
+        break
+    }
+  }
+  return draft
+}
+
+/**
+ * ⭐ 2 つの下書きが同じ内容か（**編集の「打ちかけ」判定**・§1-11）。
+ *
+ * ⚠⚠ **新規と編集で「打ちかけ」の意味が違う。**
+ *   - **新規**: 空の下書きと違うか（`isDraftDirty`）——何か打ったら印が点く
+ *   - **編集**: **開いたときの下書きと違うか**（ここ）——**読み込んだ値そのものは「打ちかけ」ではない**
+ *
+ *   ⚠ 編集で `isDraftDirty()` を使うと、**開いた瞬間から印が点きっぱなし**になり、
+ *   何も触っていないのに「捨てて別の素材を開きますか？」と聞かれる
+ *   ＝**確認が意味を失う**（読まずに押す操作になる）。
+ *
+ * ⚠ 画像（Blob）は**同一性**で見る。中身の比較はしない——
+ *   差し替えれば別のオブジェクトになるので、同一性で足りる。
+ */
+export function isSameDraft(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (a instanceof Blob || b instanceof Blob) return false
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    return a.every((item, index) => isSameDraft(item, b[index]))
+  }
+  if (typeof a === 'object' && typeof b === 'object' && a !== null && b !== null) {
+    const left = a as Record<string, unknown>
+    const right = b as Record<string, unknown>
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+    return [...keys].every((key) => isSameDraft(left[key], right[key]))
+  }
+  return false
+}

@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { TemplateDefinition } from '../template/model'
-import { collectImages, createDraft, isDraftDirty, pruneEmpty, validateDraft } from '../template/form'
+import {
+  collectImages,
+  createDraft,
+  isDraftDirty,
+  isSameDraft,
+  pruneEmpty,
+  validateDraft,
+} from '../template/form'
 import FieldEditor from './FieldEditor.vue'
 
 /**
@@ -10,7 +17,15 @@ import FieldEditor from './FieldEditor.vue'
  * ⚠ 型ごとの分岐は 1 つも持たない。**それは `FieldEditor.vue` の責務**で、
  *   ここは「下書きを作る・保存する・やめる」だけを持つ。
  */
-const props = defineProps<{ def: TemplateDefinition }>()
+const props = defineProps<{
+  def: TemplateDefinition
+  /**
+   * ⭐ 生成済み素材を**編集**で開くときの初期値（§1-11-2）。
+   * ⚠ 無ければ新規作成（空の下書きから始まる）。
+   * ⚠⚠ **これが有るかどうかで「打ちかけ」の意味が変わる**（下の `dirty` を参照）。
+   */
+  initialDraft?: Record<string, unknown> | null
+}>()
 const emit = defineEmits<{
   /**
    * ⚠ **画像の実体（`images`）は `data` と別に渡す**（§1-4: 実体は `TemplateInstance.images`）。
@@ -25,7 +40,22 @@ const emit = defineEmits<{
   'update:dirty': [dirty: boolean]
 }>()
 
-const draft = ref<Record<string, unknown>>(createDraft(props.def.fields))
+/** ⭐ 編集で開いたか（＝生成済み素材の上書き）。⚠ 文言と「打ちかけ」の意味がこれで変わる。 */
+const editing = props.initialDraft != null
+/**
+ * ⚠ 比較用に**開いた時の姿**を取っておく（編集の「打ちかけ」はここからの差分）。
+ *
+ * ⚠⚠ **浅い複製で足りるし、浅くなければならない。**
+ *   入れ子の値は `FieldEditor` が**新しいオブジェクトを作って**返す（その場で書き換えない）ので、
+ *   浅い複製でも比較が壊れない。
+ *   ⚠ 逆に `structuredClone()` を使うと**画像の Blob が別オブジェクトになり**、
+ *   `isSameDraft()` が同一性で見るため**開いた瞬間から「変更済み」**になる
+ *   （＝画像を持つ素材を開いただけで確認が出る）。
+ */
+const openedWith = props.initialDraft ? { ...props.initialDraft } : null
+const draft = ref<Record<string, unknown>>(
+  props.initialDraft ? { ...props.initialDraft } : createDraft(props.def.fields),
+)
 /** 直前の保存操作で見つかった誤り（§1-3-1 決定 4）。空なら何も出さない。 */
 const errors = ref<string[]>([])
 
@@ -44,7 +74,15 @@ watch(
  *   これが無いと「保存でタブが閉じる → 別のテンプレを選び直す」ときに
  *   **前の下書きの印が残ったまま**になる（閉じるときは destroy されるので emit が来ない）。
  */
-const dirty = computed(() => isDraftDirty(props.def.fields, draft.value))
+/**
+ * ⚠⚠ **新規と編集で「打ちかけ」の意味が違う**（§1-11）。
+ *   新規＝空と違うか／**編集＝開いた時と違うか**。
+ *   ⚠ 編集で `isDraftDirty()` を使うと**開いた瞬間から印が点きっぱなし**になり、
+ *   何も触っていないのに確認が出る＝**確認が読まずに押すものになる**。
+ */
+const dirty = computed(() =>
+  openedWith ? !isSameDraft(draft.value, openedWith) : isDraftDirty(props.def.fields, draft.value),
+)
 watch(dirty, (value) => emit('update:dirty', value), { immediate: true })
 
 function onSubmit() {
@@ -78,7 +116,8 @@ function onSubmit() {
       <li v-for="message in errors" :key="message">{{ message }}</li>
     </ul>
     <div class="tform__actions">
-      <button type="submit">保存して素材にする</button>
+      <!-- ⚠ 文言は契約（§1-10）。新規と編集で違う——「素材にする」のは新規のときだけ -->
+      <button type="submit">{{ editing ? '保存する' : '保存して素材にする' }}</button>
       <button type="button" @click="emit('cancel')">やめる</button>
     </div>
   </form>

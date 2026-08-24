@@ -7,13 +7,15 @@
  * ⚠ 検証データは全て創作。
  */
 import { describe, it, expect } from 'vitest'
-import { FIELD_TYPES, type FieldDef } from '../model'
+import { FIELD_TYPES, type ArrayItem, type FieldDef } from '../model'
 import {
   FIELD_TYPE_LABELS,
   ITEM_ID_KEY,
   SUPPORTED_FIELD_TYPES,
   collectImages,
   createArrayItem,
+  draftFromInstance,
+  isSameDraft,
   createDraft,
   isDraftDirty,
   isNeverAskedFieldType,
@@ -803,5 +805,139 @@ describe('判別子付き共用体の検証（validateDraft）', () => {
     expect(errors[0]).toContain('罠')
     expect(errors[0]).toContain('対象')
     expect(errors[0]).toContain('C3')
+  })
+})
+
+/**
+ * ⭐⭐ 保存済みインスタンス → 下書き（`draftFromInstance`・§1-11-2・**要望B の本体**）。
+ *
+ * ⚠⚠ **本丸は「配列要素の `id` を保つ」こと**（§1-11-1）。
+ *   採番し直すと、本文に置いた `partRef`（`<key>:<要素id>`）が**全部行方不明になる**——
+ *   ⚠ **例外は出ないし、フォームの画面上も何も変わらない。**
+ */
+describe('保存済みデータから下書きへ戻す（draftFromInstance）', () => {
+  const ROOM_FIELDS: FieldDef[] = [
+    { key: 'name', type: 'string', label: '名前' },
+    { key: 'at', type: 'coordinate', label: '位置' },
+  ]
+  const FIELDS: FieldDef[] = [
+    { key: 'title', type: 'string', label: '題' },
+    { key: 'count', type: 'integer', label: '数' },
+    { key: 'secret', type: 'boolean', label: '秘密' },
+    { key: 'rooms', type: 'array', label: '部屋', fields: ROOM_FIELDS },
+    { key: 'photo', type: 'image', label: '顔写真' },
+    TRAP_FIELD,
+    { key: 'trapCount', type: 'derived', label: 'トラップ数' },
+  ]
+
+  it('⭐⭐⭐ 配列要素の `id` を保つ（採番し直すと本文の参照が全部行方不明になる）', () => {
+    const data = {
+      rooms: [
+        { id: 'item-aaa', name: 'ほこら' },
+        { id: 'item-bbb', name: 'いずみ' },
+      ],
+    }
+    const draft = draftFromInstance(FIELDS, data)
+    const rooms = draft.rooms as ArrayItem[]
+    // ⚠⚠ ここが本丸。`createArrayItem()` を通すと必ず新しい id になる。
+    expect(rooms.map((r) => r.id)).toEqual(['item-aaa', 'item-bbb'])
+    expect(rooms.map((r) => r.name)).toEqual(['ほこら', 'いずみ'])
+  })
+
+  it('⭐ 保存された値が入る（スカラー・真偽・入れ子の座標まで）', () => {
+    const draft = draftFromInstance(FIELDS, {
+      title: 'まよいの森',
+      count: 3,
+      secret: true,
+      rooms: [{ id: 'item-a', name: 'ほこら', at: { row: 'B', col: 2 } }],
+    })
+    expect(draft.title).toBe('まよいの森')
+    expect(draft.count).toBe(3)
+    expect(draft.secret).toBe(true)
+    expect((draft.rooms as ArrayItem[])[0]!.at).toEqual({ row: 'B', col: 2 })
+  })
+
+  it('⭐⭐ 定義に後から増えた項目は「空欄」として出る（土台は定義側から作る・§1-11-2）', () => {
+    // 古いデータ（`count` を持たない時代のもの）を、`count` が増えた定義で開く
+    const draft = draftFromInstance(FIELDS, { title: 'ふるいの' })
+    // ⚠⚠ データから下書きを作ると**この欄が画面から消える**（＝二度と入力できない）
+    expect('count' in draft).toBe(true)
+    expect(draft.count).toBeNull()
+    expect('secret' in draft).toBe(true)
+    expect(draft.rooms).toEqual([])
+  })
+
+  it('⭐ 画像は `images` から戻す（`data` 側は見ない）', () => {
+    const blob = new Blob(['x'], { type: 'image/png' })
+    // ⚠⚠ `data` に画像らしきものが在っても使わない（実体の在処は 1 つ・§1-11-4）
+    const draft = draftFromInstance(FIELDS, { photo: 'にせもの' }, { photo: blob })
+    expect(draft.photo).toBe(blob)
+  })
+
+  it('画像を持たない素材は空欄で戻る（否定形）', () => {
+    expect(draftFromInstance(FIELDS, {}).photo).toBeNull()
+  })
+
+  it('⭐ `oneOf` は保存された枝が復元される。⚠ 選ばれていない枝は戻らない（§1-11-3）', () => {
+    const draft = draftFromInstance(FIELDS, {
+      trap: { name: '坂道', higherEnd: { row: 'B', col: 1 } },
+    })
+    const trap = draft.trap as Record<string, unknown>
+    expect(trap.name).toBe('坂道')
+    expect(trap.higherEnd).toEqual({ row: 'B', col: 1 })
+    // ⚠ 「幻の路」に打った値は**そもそも保存されていない**（§1-3-3c の契約の帰結）
+    expect(Object.keys(trap).sort()).toEqual(['higherEnd', 'name'])
+  })
+
+  it('尋ねない型（導出値）は下書きにキーを作らない', () => {
+    expect('trapCount' in draftFromInstance(FIELDS, { trapCount: 3 })).toBe(false)
+  })
+
+  it('⚠ 定義に無いキーは下書きに載らない＝保存し直すと消える（現状の仕様案）', () => {
+    // ⚠⚠ **黙って消えるのを避けるため、ここに述語として置いておく。**
+    //   要検証[定義に無いキーを持つデータが実在すると分かったら、消えてよいかを決める
+    //          （同梱サンプルでは 0 件＝現状は到達不能）]
+    const draft = draftFromInstance(FIELDS, { title: 'ある', しらないキー: 'きえる' })
+    expect('しらないキー' in draft).toBe(false)
+    expect(pruneEmpty(FIELDS, draft)).toEqual({ secret: false, rooms: [], title: 'ある' })
+  })
+
+  it('⭐ 戻した下書きをそのまま保存すると、元のデータに戻る（往復）', () => {
+    // ⚠ 「開いて何もせず保存」で値が変わらないこと。⚠⚠ ここが崩れると、
+    //   開いただけで中身が書き換わる（利用者は何もしていないのに）。
+    const data = {
+      title: 'まよいの森',
+      count: 3,
+      secret: false,
+      rooms: [{ id: 'item-a', name: 'ほこら', at: { row: 'B', col: 2 } }],
+      trap: { name: '幻の路' },
+    }
+    const draft = draftFromInstance(FIELDS, data)
+    expect(validateDraft(FIELDS, draft)).toEqual([])
+    expect(pruneEmpty(FIELDS, draft)).toEqual(data)
+  })
+})
+
+describe('編集の「打ちかけ」は開いた時からの差分（isSameDraft）', () => {
+  it('⭐ 開いた直後は「打ちかけ」ではない（画像を持っていても）', () => {
+    const blob = new Blob(['x'], { type: 'image/png' })
+    const fields: FieldDef[] = [
+      { key: 'name', type: 'string', label: '名前' },
+      { key: 'photo', type: 'image', label: '写真' },
+    ]
+    const draft = draftFromInstance(fields, { name: 'ねこ' }, { photo: blob })
+    // ⚠⚠ 浅い複製で渡す（`structuredClone` だと **Blob が別オブジェクトになって**常に差分になる）
+    expect(isSameDraft({ ...draft }, draft)).toBe(true)
+    // ⚠ 新規の判定（空と違うか）で見ると、開いた瞬間から「打ちかけ」になってしまう
+    expect(isDraftDirty(fields, draft)).toBe(true)
+  })
+
+  it('1 文字でも変えれば差分になる／入れ子の奥でも見つかる', () => {
+    const base = { title: 'あ', nest: { inner: 'い' }, items: [{ id: 'x', name: 'う' }] }
+    expect(isSameDraft({ ...base, title: 'ん' }, base)).toBe(false)
+    expect(isSameDraft({ ...base, nest: { inner: 'ん' } }, base)).toBe(false)
+    expect(isSameDraft({ ...base, items: [{ id: 'x', name: 'ん' }] }, base)).toBe(false)
+    // 件数が変わっても差分
+    expect(isSameDraft({ ...base, items: [] }, base)).toBe(false)
   })
 })
