@@ -1,23 +1,43 @@
 {
   "id": "builtin.dungeon-map",
   "name": "迷宮マップ",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "fields": [
     {
       "key": "overview",
       "type": "object",
       "label": "全体",
       "fields": [
-        { "key": "name", "type": "string", "label": "マップ名" },
-        { "key": "level", "type": "integer", "label": "レベル" },
-        { "key": "playerCount", "type": "integer", "label": "プレイヤー数" },
+        {
+          "key": "name",
+          "type": "string",
+          "label": "マップ名"
+        },
+        {
+          "key": "level",
+          "type": "integer",
+          "label": "レベル"
+        },
+        {
+          "key": "playerCount",
+          "type": "integer",
+          "label": "プレイヤー数"
+        },
         {
           "key": "size",
           "type": "object",
           "label": "サイズ",
           "fields": [
-            { "key": "width", "type": "integer", "label": "幅" },
-            { "key": "height", "type": "integer", "label": "高さ" }
+            {
+              "key": "width",
+              "type": "integer",
+              "label": "幅"
+            },
+            {
+              "key": "height",
+              "type": "integer",
+              "label": "高さ"
+            }
           ]
         }
       ]
@@ -27,8 +47,16 @@
       "type": "array",
       "label": "入口",
       "fields": [
-        { "key": "at", "type": "coordinate", "label": "位置" },
-        { "key": "facing", "type": "direction", "label": "向き" }
+        {
+          "key": "at",
+          "type": "coordinate",
+          "label": "位置"
+        },
+        {
+          "key": "facing",
+          "type": "direction",
+          "label": "向き"
+        }
       ]
     },
     {
@@ -36,9 +64,47 @@
       "type": "array",
       "label": "道",
       "fields": [
-        { "key": "from", "type": "edgeRef", "label": "始点" },
-        { "key": "to", "type": "edgeRef", "label": "終点" },
-        { "key": "trap", "type": "oneOf", "label": "罠" }
+        {
+          "key": "from",
+          "type": "edgeRef",
+          "label": "始点"
+        },
+        {
+          "key": "to",
+          "type": "edgeRef",
+          "label": "終点"
+        },
+        {
+          "key": "trap",
+          "type": "oneOf",
+          "label": "罠",
+          "discriminator": "name",
+          "variants": [
+            {
+              "value": "坂道",
+              "fields": [
+                {
+                  "key": "higherEnd",
+                  "type": "coordinate",
+                  "label": "高い方"
+                }
+              ]
+            },
+            {
+              "value": "幻の路"
+            },
+            {
+              "value": "シークレットドア",
+              "fields": [
+                {
+                  "key": "target",
+                  "type": "ref",
+                  "label": "対象"
+                }
+              ]
+            }
+          ]
+        }
       ]
     },
     {
@@ -46,9 +112,240 @@
       "type": "array",
       "label": "部屋",
       "fields": [
-        { "key": "at", "type": "coordinate", "label": "位置" },
-        { "key": "name", "type": "string", "label": "名前" },
-        { "key": "encounter", "type": "oneOf", "label": "遭遇" },
+        {
+          "key": "at",
+          "type": "coordinate",
+          "label": "位置"
+        },
+        {
+          "key": "name",
+          "type": "string",
+          "label": "名前"
+        },
+        {
+          "key": "encounter",
+          "type": "oneOf",
+          "label": "遭遇",
+          "fields": [
+            {
+              "key": "kind",
+              "type": "enum",
+              "label": "種別",
+              "choices": [
+                "友好",
+                "敵対"
+              ]
+            }
+          ],
+          "discriminator": "shape",
+          "variants": [
+            {
+              "value": "enemies",
+              "label": "敵の列挙",
+              "fields": [
+                {
+                  "key": "enemies",
+                  "type": "array",
+                  "label": "敵",
+                  "fields": [
+                    {
+                      "key": "name",
+                      "type": "string",
+                      "label": "名前"
+                    },
+                    {
+                      "key": "count",
+                      "type": "integer",
+                      "label": "数"
+                    },
+                    {
+                      "key": "note",
+                      "type": "text",
+                      "label": "注釈"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "battlefield",
+              "label": "戦場",
+              "fields": [
+                {
+                  "key": "battlefield",
+                  "type": "object",
+                  "label": "戦場",
+                  "fields": [
+                    {
+                      "key": "enemyFront",
+                      "type": "object",
+                      "label": "敵前衛",
+                      "fields": [
+                        {
+                          "key": "enemies",
+                          "type": "array",
+                          "label": "敵",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            },
+                            {
+                              "key": "count",
+                              "type": "integer",
+                              "label": "数"
+                            },
+                            {
+                              "key": "note",
+                              "type": "text",
+                              "label": "注釈"
+                            }
+                          ]
+                        },
+                        {
+                          "key": "traps",
+                          "type": "array",
+                          "label": "トラップ",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "key": "enemyRear",
+                      "type": "object",
+                      "label": "敵後衛",
+                      "fields": [
+                        {
+                          "key": "enemies",
+                          "type": "array",
+                          "label": "敵",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            },
+                            {
+                              "key": "count",
+                              "type": "integer",
+                              "label": "数"
+                            },
+                            {
+                              "key": "note",
+                              "type": "text",
+                              "label": "注釈"
+                            }
+                          ]
+                        },
+                        {
+                          "key": "traps",
+                          "type": "array",
+                          "label": "トラップ",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "key": "enemyBase",
+                      "type": "object",
+                      "label": "敵本陣",
+                      "fields": [
+                        {
+                          "key": "enemies",
+                          "type": "array",
+                          "label": "敵",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            },
+                            {
+                              "key": "count",
+                              "type": "integer",
+                              "label": "数"
+                            },
+                            {
+                              "key": "note",
+                              "type": "text",
+                              "label": "注釈"
+                            }
+                          ]
+                        },
+                        {
+                          "key": "traps",
+                          "type": "array",
+                          "label": "トラップ",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "key": "allyFront",
+                      "type": "object",
+                      "label": "味方前衛",
+                      "fields": [
+                        {
+                          "key": "enemies",
+                          "type": "array",
+                          "label": "敵",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            },
+                            {
+                              "key": "count",
+                              "type": "integer",
+                              "label": "数"
+                            },
+                            {
+                              "key": "note",
+                              "type": "text",
+                              "label": "注釈"
+                            }
+                          ]
+                        },
+                        {
+                          "key": "traps",
+                          "type": "array",
+                          "label": "トラップ",
+                          "fields": [
+                            {
+                              "key": "name",
+                              "type": "string",
+                              "label": "名前"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
         {
           "key": "traps",
           "type": "array",
@@ -68,7 +365,11 @@
                 "自動販売機"
               ]
             },
-            { "key": "target", "type": "ref", "label": "対象" }
+            {
+              "key": "target",
+              "type": "ref",
+              "label": "対象"
+            }
           ]
         },
         {
@@ -76,13 +377,29 @@
           "type": "object",
           "label": "部屋データ",
           "fields": [
-            { "key": "trapCount", "type": "derived", "label": "トラップ数" },
-            { "key": "enemyCount", "type": "derived", "label": "エネミー数" }
+            {
+              "key": "trapCount",
+              "type": "derived",
+              "label": "トラップ数"
+            },
+            {
+              "key": "enemyCount",
+              "type": "derived",
+              "label": "エネミー数"
+            }
           ]
         },
-        { "key": "description", "type": "text", "label": "描写" }
+        {
+          "key": "description",
+          "type": "text",
+          "label": "描写"
+        }
       ]
     }
   ],
-  "outputs": [{ "pattern": "builtin:dungeon-map" }]
+  "outputs": [
+    {
+      "pattern": "builtin:dungeon-map"
+    }
+  ]
 }

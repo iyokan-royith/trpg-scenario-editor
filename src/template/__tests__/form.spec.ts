@@ -23,7 +23,7 @@ import {
   pruneEmpty,
   validateDraft,
 } from '../form'
-import { DIRECTIONS, childFieldsOf } from '../domain'
+import { DIRECTIONS, childFieldsOf, choicesOf, visibleFieldsOf } from '../domain'
 
 /** 基本型 7 種＋未対応型を 1 つ混ぜた定義（この切れ目の全域）。 */
 const BASIC_FIELDS: FieldDef[] = [
@@ -47,9 +47,8 @@ const BASIC_FIELDS: FieldDef[] = [
       { key: 'weight', type: 'integer', label: '重さ' },
     ],
   },
-  // ⚠ この 2 つは「欄が出ない」型。**理由が別**なので両方を混ぜてある（§1-3-3）。
-  { key: 'guard', type: 'ref', label: '見張り' }, // まだ入力できない（判断待ち）
-  { key: 'trapCount', type: 'derived', label: 'トラップ数' }, // これからも尋ねない
+  // ⚠ 欄が出ない唯一の型（これからも尋ねない・§1-3-3）
+  { key: 'trapCount', type: 'derived', label: 'トラップ数' },
 ]
 
 /** ドメイン型（この切れ目で足した A 群・B 群）。⚠ `edgeRef` は座標＋方向の合成。 */
@@ -74,7 +73,7 @@ describe('型の日本語名（§1-8-2c: 内部の値を画面に出さない）
     }
   })
 
-  it('入力できるのは基本型 7 種＋ドメイン型 4 種（`ref` / `oneOf` はまだ・`derived` は尋ねない）', () => {
+  it('⭐ C 群が入り、`derived` 以外の全 13 種が入力できる', () => {
     expect([...SUPPORTED_FIELD_TYPES]).toEqual([
       'string',
       'integer',
@@ -87,19 +86,29 @@ describe('型の日本語名（§1-8-2c: 内部の値を画面に出さない）
       'direction',
       'edgeRef',
       'image',
+      'oneOf',
+      'ref',
     ])
-    // ⏸ 判断待ちの 2 種（§1-3-3a）。⚠ ここが true に倒れたら、入力欄の無い型が
-    //   「入力できる」と言われて**画面に何も出ないまま黙って通る**。
-    expect(isSupportedFieldType('ref')).toBe(false)
-    expect(isSupportedFieldType('oneOf')).toBe(false)
+    expect(isSupportedFieldType('oneOf')).toBe(true)
+    expect(isSupportedFieldType('ref')).toBe(true)
+  })
+
+  it('⭐⭐ 宣言できる型は必ずどちらかの集合に入る（新しい型を足したときに落ちる網）', () => {
+    // ⚠⚠ 「入力できる」でも「尋ねない」でもない型が生まれると、
+    //   その欄は**画面から消える**（`FieldEditor` の未対応の枝へ落ちる）。
+    for (const type of FIELD_TYPES) {
+      expect(isSupportedFieldType(type) || isNeverAskedFieldType(type)).toBe(true)
+      // ⚠ 両方に入ってはならない（尋ねないのに入力欄を探しに行く）
+      expect(isSupportedFieldType(type) && isNeverAskedFieldType(type)).toBe(false)
+    }
   })
 
   it('⭐ `derived` は「まだ」ではなく「これからも尋ねない」——2 つの集合を混ぜない（§1-3-3）', () => {
     expect(isNeverAskedFieldType('derived')).toBe(true)
     // ⚠⚠ 入力できる型に混ぜない（混ぜると入力欄を探しに行く）
     expect(isSupportedFieldType('derived')).toBe(false)
-    // ⚠⚠ かつ「まだ入力できません」の集合とも別（＝否定で表さない）。
-    //   ここが false になると、`derived` が未対応型と同じ文言で出る。
+    // ⚠⚠ **否定で表さない**ことがここの主題。C 群が入って未対応型が 0 になった今、
+    //   「対応済みの否定」で書いていたら `derived` は**どの集合にも入らなくなっていた**。
     for (const type of ['ref', 'oneOf'] as const) expect(isNeverAskedFieldType(type)).toBe(false)
   })
 
@@ -123,8 +132,7 @@ describe('下書きの初期値', () => {
     })
     // 入力できないものの空値を作らない（作ると「入力していないのに値がある」データになる）
     expect(ITEM_ID_KEY in draft).toBe(false)
-    expect('guard' in draft).toBe(false)
-    // ⚠ 尋ねない型も同じ（導出値をデータ側に持たせない・P0 知見 1）
+    // ⚠ 尋ねない型は下書きにキーごと作らない（導出値をデータ側に持たせない・P0 知見 1）
     expect('trapCount' in draft).toBe(false)
   })
 
@@ -539,5 +547,252 @@ describe('画像の実体を取り出す（collectImages）', () => {
       nest: { inner: blob() },
     })
     expect(images).toEqual({})
+  })
+})
+
+/**
+ * C 群: 判別子付き共用体（`oneOf`）と参照（`ref`）。
+ *
+ * ⚠⚠ **3 つの述語が、それぞれ違う集合を歩く**のがこの型の本体（§1-3-3c・A61）:
+ *   `pruneEmpty` と `validateDraft` は**選ばれた枝だけ**、`isDraftDirty` は**全部の枝**。
+ *   揃えると、どちらかの向きに必ず壊れる——
+ *   揃えて「選ばれた枝だけ」にすると**打った値が残っているのに印が消える**、
+ *   揃えて「全部の枝」にすると**見えない欄のせいで保存できなくなる／隠れた枝が保存される**。
+ */
+const TRAP_FIELD: FieldDef = {
+  key: 'trap',
+  type: 'oneOf',
+  label: '罠',
+  discriminator: 'name',
+  variants: [
+    { value: '坂道', fields: [{ key: 'higherEnd', type: 'coordinate', label: '高い方' }] },
+    { value: '幻の路' },
+    { value: 'シークレットドア', fields: [{ key: 'target', type: 'ref', label: '対象' }] },
+  ],
+}
+
+/** 共有フィールドを持つ `oneOf`（実物の `遭遇` と同じ形）。 */
+const ENCOUNTER_FIELD: FieldDef = {
+  key: 'encounter',
+  type: 'oneOf',
+  label: '遭遇',
+  fields: [{ key: 'kind', type: 'enum', label: '種別', choices: ['友好', '敵対'] }],
+  discriminator: 'shape',
+  variants: [
+    {
+      value: 'enemies',
+      label: '敵の列挙',
+      fields: [
+        { key: 'enemies', type: 'array', label: '敵', fields: [{ key: 'name', type: 'string', label: '名前' }] },
+      ],
+    },
+    { value: 'battlefield', label: '戦場', fields: [{ key: 'battlefield', type: 'object', label: '戦場', fields: [{ key: 'enemyFront', type: 'string', label: '敵前衛' }] }] },
+  ],
+}
+
+const REF_FIELD: FieldDef = { key: 'target', type: 'ref', label: '対象' }
+const C_FIELDS: FieldDef[] = [TRAP_FIELD, ENCOUNTER_FIELD, REF_FIELD]
+
+describe('判別子付き共用体の下書き（oneOf / ref）', () => {
+  it('⭐ 枝が選ばれるまでは判別子と共有フィールドだけ（枝の空値を先に作らない）', () => {
+    expect(createDraft(C_FIELDS)).toEqual({
+      trap: { name: '' },
+      encounter: { shape: '', kind: '' },
+      // ⚠ `ref` の判別子は型が決めている（`kind`）
+      target: { kind: '' },
+    })
+  })
+
+  it('⭐⭐ `ref` の枝は型が持っている（定義に書かない・書けない）', () => {
+    const kinds = visibleFieldsOf(REF_FIELD, undefined)[0]!
+    expect(kinds.choices).toEqual(['room', 'corridor', 'roomElement'])
+    // ⚠ 画面に出るのは日本語（§1-8-1: 値は英語・表示は日本語）
+    expect(choicesOf(kinds).map((c) => c.label)).toEqual(['部屋', '通路', '部屋内要素'])
+  })
+})
+
+describe('判別子付き共用体を保存する（pruneEmpty）', () => {
+  const draftOf = (patch: Record<string, unknown>) => ({ ...createDraft(C_FIELDS), ...patch })
+
+  it('⭐ 種類を選んでいなければ何も書かない（否定形の述語）', () => {
+    expect(pruneEmpty(C_FIELDS, createDraft(C_FIELDS))).toEqual({})
+  })
+
+  it('⭐⭐ 選んだ枝だけを書く——隠れている枝に打った値は保存されない', () => {
+    // 「坂道」に打ってから「幻の路」へ切り替えた下書き（前の枝の値は残っている）
+    const data = pruneEmpty(
+      C_FIELDS,
+      draftOf({ trap: { name: '幻の路', higherEnd: { row: 'B', col: 1 } } }),
+    )
+    // ⚠⚠ 判別子が値を定義する。選ばれていない枝は下書きの作業領域であって値の一部ではない。
+    expect(data.trap).toEqual({ name: '幻の路' })
+  })
+
+  it('⭐ フィールドを持たない枝も、判別子だけで保存される（`{name:"幻の路"}`）', () => {
+    // ⚠ `object` の「中身が全部空なら丸ごと書かない」を当ててはならない
+    //   （当てると、種類を選んだのに何も保存されない）。
+    expect(pruneEmpty(C_FIELDS, draftOf({ trap: { name: '温泉' } })).trap).toEqual({ name: '温泉' })
+  })
+
+  it('選んだ枝の中身は、その型のまま入る（座標・共有フィールドも）', () => {
+    const data = pruneEmpty(
+      C_FIELDS,
+      draftOf({
+        trap: { name: '坂道', higherEnd: { row: 'B', col: 1 } },
+        encounter: { kind: '敵対', shape: 'enemies', enemies: [{ id: 'e1', name: 'スライム' }] },
+      }),
+    )
+    expect(data.trap).toEqual({ name: '坂道', higherEnd: { row: 'B', col: 1 } })
+    // ⚠ 共有フィールド（`kind`）は枝に関わらず書かれる
+    expect(data.encounter).toEqual({
+      kind: '敵対',
+      shape: 'enemies',
+      enemies: [{ id: 'e1', name: 'スライム' }],
+    })
+  })
+
+  it('⭐ `ref` の通路は座標の対（`ends`）として書く（`array` ではない）', () => {
+    const data = pruneEmpty(
+      C_FIELDS,
+      draftOf({
+        target: {
+          kind: 'corridor',
+          ends: [
+            { row: 'A', col: 2 },
+            { row: 'B', col: 3 },
+          ],
+        },
+      }),
+    )
+    expect(data.target).toEqual({
+      kind: 'corridor',
+      ends: [
+        { row: 'A', col: 2 },
+        { row: 'B', col: 3 },
+      ],
+    })
+  })
+
+  it('`ref` の部屋・部屋内要素も §1-8-2 の形で書く（⚠ 部屋内要素はサンプルに実データが無い）', () => {
+    expect(pruneEmpty(C_FIELDS, draftOf({ target: { kind: 'room', at: { row: 'C', col: 3 } } })).target).toEqual({
+      kind: 'room',
+      at: { row: 'C', col: 3 },
+    })
+    expect(
+      pruneEmpty(
+        C_FIELDS,
+        draftOf({ target: { kind: 'roomElement', at: { row: 'C', col: 3 }, elementId: 'trap-1' } }),
+      ).target,
+    ).toEqual({ kind: 'roomElement', at: { row: 'C', col: 3 }, elementId: 'trap-1' })
+  })
+})
+
+describe('判別子付き共用体の未保存の印（isDraftDirty）', () => {
+  it('⭐ 空は打ちかけではない（否定形の述語）', () => {
+    expect(isDraftDirty(C_FIELDS, createDraft(C_FIELDS))).toBe(false)
+  })
+
+  it('種類を選んだだけで打ちかけ', () => {
+    expect(isDraftDirty(C_FIELDS, { ...createDraft(C_FIELDS), trap: { name: '温泉' } })).toBe(true)
+  })
+
+  it('⭐⭐ 隠れている枝に打った値も打ちかけとして数える（保存・検証との非対称）', () => {
+    // 「坂道」に打ってから種類を空へ戻した下書き＝画面には何も見えないが、値は残っている
+    const draft = { ...createDraft(C_FIELDS), trap: { name: '', higherEnd: { row: 'B', col: 1 } } }
+    // ⚠⚠ ここが false になると、**値が残っているのに印が消える**（下書きが空だと誤解させる）
+    expect(isDraftDirty(C_FIELDS, draft)).toBe(true)
+    // ⚠ 同じ下書きで、保存には何も出ない（3 つの述語が別々の集合を歩いている証拠）
+    expect(pruneEmpty(C_FIELDS, draft)).toEqual({})
+  })
+})
+
+describe('判別子付き共用体の検証（validateDraft）', () => {
+  const draftOf = (patch: Record<string, unknown>) => ({ ...createDraft(C_FIELDS), ...patch })
+
+  it('空も、選んだ枝が揃っているものも通る（陽性対照）', () => {
+    expect(validateDraft(C_FIELDS, createDraft(C_FIELDS))).toEqual([])
+    expect(
+      validateDraft(
+        C_FIELDS,
+        draftOf({
+          trap: { name: '坂道', higherEnd: { row: 'B', col: 1 } },
+          target: { kind: 'room', at: { row: 'A', col: 1 } },
+        }),
+      ),
+    ).toEqual([])
+  })
+
+  it('⭐⭐ 隠れている枝の半端な値は保存を塞がない（見えない欄は直せない）', () => {
+    // 「坂道」に半端な座標を打ってから「幻の路」へ切り替えた下書き
+    const errors = validateDraft(
+      C_FIELDS,
+      draftOf({ trap: { name: '幻の路', higherEnd: { row: 'B', col: null } } }),
+    )
+    // ⚠⚠ ここでエラーを出すと、**画面に出ていない欄のせいで保存できなくなる**
+    expect(errors).toEqual([])
+  })
+
+  it('⭐ 種類を空へ戻したら、隠れた値があっても通る（詰みを作らない）', () => {
+    expect(
+      validateDraft(C_FIELDS, draftOf({ trap: { name: '', higherEnd: { row: 'B', col: null } } })),
+    ).toEqual([])
+  })
+
+  it('選んだ枝の中の誤りは、場所つきで弾く', () => {
+    const errors = validateDraft(
+      C_FIELDS,
+      draftOf({ trap: { name: '坂道', higherEnd: { row: 'B', col: null } } }),
+    )
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('罠')
+    expect(errors[0]).toContain('高い方')
+    expect(errors[0]).toContain('行と列')
+  })
+
+  it('知らない種類は弾く（保存済みデータ・持ち込み定義から来うる）', () => {
+    const errors = validateDraft(C_FIELDS, draftOf({ trap: { name: '底なし沼' } }))
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('知らない種類')
+  })
+
+  it('⭐ `ref` の通路は両端が要る（片端だけの通路は指せない）', () => {
+    const errors = validateDraft(
+      C_FIELDS,
+      draftOf({ target: { kind: 'corridor', ends: [{ row: 'A', col: 2 }, { row: '', col: null }] } }),
+    )
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('両端')
+    expect(errors[0]).toContain('2 つとも')
+  })
+
+  it('`ref` の枝の中の座標も「何つ目か」まで言う', () => {
+    const errors = validateDraft(
+      C_FIELDS,
+      draftOf({
+        target: {
+          kind: 'corridor',
+          ends: [
+            { row: 'A', col: 2 },
+            { row: 'B', col: 1.5 },
+          ],
+        },
+      }),
+    )
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('2 つ目')
+    expect(errors[0]).toContain('整数')
+  })
+
+  it('⭐ `oneOf` の中の `ref` も検証される（再帰が枝をまたいで切れていない）', () => {
+    const errors = validateDraft(
+      C_FIELDS,
+      draftOf({
+        trap: { name: 'シークレットドア', target: { kind: 'room', at: { row: 'A', col: 0 } } },
+      }),
+    )
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('罠')
+    expect(errors[0]).toContain('対象')
+    expect(errors[0]).toContain('1 以上')
   })
 })

@@ -12,16 +12,23 @@ import {
   EDGE_REF_FACING_KEY,
   EDGE_REF_AT_KEY,
   ROW_LETTERS,
+  allVariantFieldsOf,
   childFieldsOf,
+  discriminatorKeyOf,
   isDirection,
+  isVariantFieldType,
+  variantsOf,
+  visibleFieldsOf,
 } from './domain'
 
 /**
  * ⭐ フォームで**入力できる**型（この切れ目の範囲）。
  *
- * ⚠ 残るのは `ref` / `oneOf` の 2 種で、これは「**まだ**入力できない」（判断待ち・§1-3-3a）。
- *   `derived` は下の `NEVER_ASKED_FIELD_TYPES` を参照——**別の理由で欄が出ない**ので混ぜない。
- *   同梱の迷宮マップ定義は両方を実際に含んでいるので、
+ * ⚠⚠ **2026-08-24（C 群）で、入力できない型は 0 になった。**`derived` だけが
+ *   下の `NEVER_ASKED_FIELD_TYPES`（**別の理由**で欄が出ない）に残る。
+ *   → `FieldEditor` の「まだ入力できません」の枝は**到達しなくなった**が、
+ *   **新しい型を足したときの受け皿として残してある**（消すと、足した型の欄が黙って消える）。
+ *   ⚠ 同梱の迷宮マップ定義は全 13 種のうち 11 種を実際に含むので、
  *   **同梱品を開くこと自体がこの性質の検査**になっている。
  */
 export const SUPPORTED_FIELD_TYPES = [
@@ -36,6 +43,8 @@ export const SUPPORTED_FIELD_TYPES = [
   'direction',
   'edgeRef',
   'image',
+  'oneOf',
+  'ref',
 ] as const satisfies readonly FieldType[]
 
 export type SupportedFieldType = (typeof SUPPORTED_FIELD_TYPES)[number]
@@ -119,7 +128,26 @@ export function newItemId(): string {
  * ⚠ 未対応の型は `undefined` を返す＝**下書きにキーを作らない**。
  *   入力できないものの空値を作ると、保存したときに「入力していないのに値がある」データになる。
  */
+/**
+ * 固定長（`tuple`）の欄を 1 つ分の宣言に落とす。
+ * ⚠ `tuple` は「同じ型を n 個」なので、**中身の扱いは 1 つのときと同じ**（分岐を増やさない）。
+ */
+function singularOf(field: FieldDef): FieldDef {
+  return { ...field, tuple: undefined }
+}
+
+function tupleValues(field: FieldDef, value: unknown): unknown[] {
+  const size = field.tuple ?? 0
+  const items = Array.isArray(value) ? value : []
+  return Array.from({ length: size }, (_, index) => items[index])
+}
+
 function blankValueOf(field: FieldDef): unknown {
+  // ⚠ 固定長は**中身の型より先に**見る（`ends: [座標, 座標]` は「座標」ではなく「座標が 2 つ」）。
+  if (field.tuple !== undefined) {
+    // ⚠ `Array(n).fill()` にしない——同じオブジェクトを共有すると片方を打つと両方変わる。
+    return Array.from({ length: field.tuple }, () => blankValueOf(singularOf(field)))
+  }
   switch (field.type) {
     case 'string':
     case 'text':
@@ -143,6 +171,11 @@ function blankValueOf(field: FieldDef): unknown {
     case 'edgeRef':
       // ⚠ 合成型の子は**型が決めている**（定義の `fields` は見ない・`domain.ts` を参照）。
       return createDraft(childFieldsOf(field))
+    case 'oneOf':
+    case 'ref':
+      // ⚠ 枝が選ばれるまでは判別子と共有フィールドだけ（枝の空値を先に作らない）。
+      //   ⚠⚠ 作ると「選んでいないのに値がある」になり、`pruneEmpty` が空の枝を書く。
+      return createDraft(visibleFieldsOf(field, undefined))
     default:
       return undefined
   }
@@ -214,6 +247,10 @@ function edgeRefState(value: unknown): 'blank' | 'partial' | 'complete' {
  *   入れ子と配列は「どこの話か」を前に積む——`もちもの 2 件目の「重さ」` のように
  *   **場所が言えないと、画面のどの欄を直せばよいか分からない**。
  *
+ * ⚠⚠ **この関数が `pruneEmpty()` の事前条件である**（台帳 A61）。
+ *   保存経路は必ず **ここ → `pruneEmpty()`** の順で通す。逆順・片方だけは不変条件を壊す。
+ *   ⚠ 判別子付き共用体では**選ばれた枝だけ**を見る（隠れた枝の半端な値で保存を塞がない）。
+ *
  * @param path 呼び出し側は渡さない（再帰で「ここまでの場所」を積むための引数）
  * @returns 誤りの説明。**空配列なら保存してよい**
  */
@@ -229,6 +266,44 @@ export function validateDraft(
   for (const field of fields) {
     const value = draft[field.key]
     const label = labelOf(field)
+
+    // ⚠ 固定長（`ends: [座標, 座標]`）は型より先に見る。中身の検査は 1 つのときと同じ経路へ流す。
+    if (field.tuple !== undefined) {
+      const items = tupleValues(field, value)
+      const filled = items.map((item) => isDraftDirty([singularOf(field)], { [field.key]: item }))
+      // ⚠ 座標と同じ線（全部か、無いか）。片端だけの通路は「通路」を指せない。
+      if (filled.some(Boolean) && !filled.every(Boolean)) {
+        errors.push(`${where(label)}は ${items.length} つとも入れてください`)
+      }
+      // ⚠ 一時的なキーで包んで、既存の検査へそのまま渡す（メッセージには何つ目かが出る）。
+      const itemFields = items.map((_, index) => ({
+        ...singularOf(field),
+        key: `${field.key}#${index}`,
+        label: `${label} ${index + 1} つ目`,
+      }))
+      const itemDraft = Object.fromEntries(
+        items.map((item, index) => [`${field.key}#${index}`, item]),
+      )
+      errors.push(...validateDraft(itemFields, itemDraft, path))
+      continue
+    }
+
+    // ⭐ 判別子付き共用体（`oneOf` / `ref`）。⚠ **選ばれた枝だけ**を検査する。
+    if (isVariantFieldType(field.type)) {
+      const record = asRecord(value)
+      const selected = record[discriminatorKeyOf(field)]
+      // ⚠⚠ 種類が空なら「入力していない」として扱う（隠れている枝の値は検査しない）。
+      //   ⚠ ここで隠れた枝を検査すると、**画面に出ていない欄のせいで保存できなくなる**
+      //   ——利用者には直す手段が無い（見えないものは直せない）。
+      if (isBlankScalar(selected)) continue
+      if (!variantsOf(field).some((variant) => variant.value === selected)) {
+        errors.push(`${where(label)}に知らない種類が入っています`)
+        continue
+      }
+      errors.push(...validateDraft(visibleFieldsOf(field, value), record, [...path, `「${label}」`]))
+      continue
+    }
+
     switch (field.type) {
       case 'integer': {
         // 未入力（null / undefined / 空文字）は誤りではない。
@@ -323,10 +398,25 @@ export function validateDraft(
  *
  * ⚠ ここは「空の下書き（`createDraft`）と違うか」だけを見る。**保存してよいかは見ない**
  *   （それは `validateDraft()` の責務）。
+ *
+ * ⚠⚠ **判別子付き共用体では、この関数だけが「全部の枝」を歩く**（`pruneEmpty` の表を参照・A61）。
+ *   枝を切り替えても前の枝の値は下書きに残る（画面から消えるだけ）ので、
+ *   選ばれた枝だけを見ると**値が残っているのに印が消える**＝下書きが空だと誤解させる。
  */
 export function isDraftDirty(fields: readonly FieldDef[], draft: Record<string, unknown>): boolean {
   return fields.some((field) => {
     const value = draft[field.key]
+    if (field.tuple !== undefined) {
+      return tupleValues(field, value).some((item) =>
+        isDraftDirty([singularOf(field)], { [field.key]: item }),
+      )
+    }
+    if (isVariantFieldType(field.type)) {
+      // ⚠⚠ **ここだけ「全部の枝」を見る**（保存・検証は選ばれた枝だけ）。
+      //   枝を切り替えても前の枝の値は下書きに残るので、
+      //   選ばれた枝だけを見ると**打った値が残っているのに印が消える**。
+      return isDraftDirty(allVariantFieldsOf(field), asRecord(value))
+    }
     switch (field.type) {
       case 'string':
       case 'text':
@@ -367,8 +457,20 @@ export function isDraftDirty(fields: readonly FieldDef[], draft: Record<string, 
 /**
  * ⭐ 下書きから `TemplateInstance.data` を作る。**空の入力は書かない。**
  *
- * ⚠ **ここは検証をしない。** 検証は `validateDraft()` の責務で、呼び手が**先に**通す。
- *   ここで黙って落とすと「保存したのに値が無い」になり、弾いたことが誰にも伝わらない。
+ * ⚠⚠ **事前条件: 呼ぶ前に `validateDraft()` を通し、誤りが 0 件であること**（台帳 A61）。
+ *   ここは検証をしない。**半端な値（行だけの座標・片端だけの `ends`）はそのまま書かれる。**
+ *   ⚠ これは欠陥ではなく**分担**だが、**分担は書いていなければ設計ではない**——
+ *   2 人目の呼び手が `validateDraft()` を飛ばした瞬間、症状は
+ *   「壊れた値が例外も出さずに保存される」になり、画面には何も出ない。
+ *
+ * ⚠ **3 つの述語は、それぞれ違う集合を歩く**（揃えてはならない・§1-3-3c）:
+ *   | 関数 | 歩く範囲 | 理由 |
+ *   |---|---|---|
+ *   | `pruneEmpty`（ここ） | **選ばれた枝だけ** | 判別子が値を定義する |
+ *   | `validateDraft` | **選ばれた枝だけ** | 見えない欄のせいで保存できなくしない |
+ *   | `isDraftDirty` | **全部の枝** | 切り替えで隠れた値も「打ちかけ」である |
+ *
+ * ⚠ ここで黙って落とすと「保存したのに値が無い」になり、弾いたことが誰にも伝わらない。
  *
  * ⚠⚠ **これは見た目の都合ではなく、既存の機構との契約である。**
  *   評価器は「フィールドが**無い**」ときに `fieldRef.default` を発火させる（§1-6-10 の T0/E0）。
@@ -385,6 +487,30 @@ export function pruneEmpty(
   const data: Record<string, unknown> = {}
   for (const field of fields) {
     const value = draft[field.key]
+
+    if (field.tuple !== undefined) {
+      const items = tupleValues(field, value)
+      const pruned = items.map(
+        (item) => pruneEmpty([singularOf(field)], { [field.key]: item })[field.key] ?? null,
+      )
+      // ⚠ 1 つも入っていなければ書かない（座標と同じ線）。
+      if (pruned.some((item) => item !== null)) data[field.key] = pruned
+      continue
+    }
+
+    // ⭐ 判別子付き共用体。⚠⚠ **選ばれた枝だけを書く**——選ばれていない枝の値は
+    //   下書きの作業領域であって、値の一部ではない（判別子が値を定義する）。
+    if (isVariantFieldType(field.type)) {
+      const record = asRecord(value)
+      const selected = record[discriminatorKeyOf(field)]
+      // ⚠ 種類が選ばれていなければ、何も書かない（隠れた枝の値も書かない）。
+      if (isBlankScalar(selected)) continue
+      // ⚠ 判別子だけの枝（`{name: '幻の路'}`）も**そのまま書く**。
+      //   `object` の「中身が全部空なら書かない」を当てない——種類が選ばれていること自体が値である。
+      data[field.key] = pruneEmpty(visibleFieldsOf(field, value), record)
+      continue
+    }
+
     switch (field.type) {
       case 'string':
       case 'text':

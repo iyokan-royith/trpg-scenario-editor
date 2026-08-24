@@ -338,12 +338,134 @@ describe('日本語キーの正規化（NFC）', () => {
       expect(ok.fields[0]!.type).toBe('image')
     })
 
+    /**
+     * 判別子付き共用体の宣言（2026-08-24・C 群）。
+     *
+     * ⚠ 保存形は**フラットな併合**（`{[判別子]: 値, ...共有, ...枝}`）なので、
+     *   キーが 1 つでも重なると**同じ入れ物に違う型が入る**。宣言の時点で弾く。
+     */
+    it('⭐ oneOf は判別子と枝が要る（無ければ、どこが悪いか分かるエラー）', () => {
+      const error = readAndFail(defWith([{ key: 'trap', type: 'oneOf' }]), 'ためし.json')
+      expect(error.message).toContain('fields[0].discriminator')
+      expect(error.message).toContain('fields[0].variants')
+
+      // ⚠ 陽性対照: 揃っていれば通る
+      const ok = readTemplateDefinition(
+        defWith([
+          {
+            key: 'trap',
+            type: 'oneOf',
+            discriminator: 'name',
+            variants: [{ value: '坂道', fields: [{ key: 'higherEnd', type: 'coordinate' }] }],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(ok.fields[0]!.variants![0]!.value).toBe('坂道')
+    })
+
+    it('⭐⭐ 判別子・共有・枝でキーが重なったら弾く（フラットに併合されるため）', () => {
+      const error = readAndFail(
+        defWith([
+          {
+            key: 'trap',
+            type: 'oneOf',
+            discriminator: 'name',
+            fields: [{ key: 'target', type: 'string' }],
+            variants: [
+              { value: '坂道', fields: [{ key: 'target', type: 'ref' }] },
+              { value: '幻の路' },
+            ],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('target')
+      expect(error.message).toContain('重複')
+
+      // 判別子と同じ名前のフィールドも弾く
+      const clash = readAndFail(
+        defWith([
+          {
+            key: 'trap',
+            type: 'oneOf',
+            discriminator: 'name',
+            fields: [{ key: 'name', type: 'string' }],
+            variants: [{ value: '坂道' }],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(clash.message).toContain('name')
+    })
+
+    it('枝の値が重複していたら弾く（どちらの枝か決まらない）', () => {
+      const error = readAndFail(
+        defWith([
+          {
+            key: 'trap',
+            type: 'oneOf',
+            discriminator: 'name',
+            variants: [{ value: '坂道' }, { value: '坂道' }],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('variants[1].value')
+      expect(error.message).toContain('重複')
+    })
+
+    it('⭐⭐ ref の枝は型が持っている（宣言したら弾く・合成型の fields と同じ線）', () => {
+      const error = readAndFail(
+        defWith([
+          { key: 'target', type: 'ref', discriminator: 'kind', variants: [{ value: 'room' }] },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('fields[0].discriminator')
+      expect(error.message).toContain('fields[0].variants')
+      expect(error.message).toContain('型が決めています')
+
+      // ⚠ 陽性対照: 何も宣言しなければ通る（枝は `domain.ts` が持っている）
+      const ok = readTemplateDefinition(defWith([{ key: 'target', type: 'ref' }]), 'ためし.json')
+      expect(ok.fields[0]!.type).toBe('ref')
+    })
+
+    it('⭐ 内部専用の指定（tuple / choiceLabels）は利用者の JSON では書けない', () => {
+      // ⚠⚠ 黙って効かせると、保存形が型の契約から外れる経路が利用者側に開く。
+      const error = readAndFail(
+        defWith([
+          { key: 'ends', type: 'coordinate', tuple: 2 },
+          { key: 'mood', type: 'enum', choices: ['はれ'], choiceLabels: { はれ: '晴れ' } },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('fields[0].tuple')
+      expect(error.message).toContain('fields[1].choiceLabels')
+    })
+
+    it('枝の中のフィールドも同じ検査を通る（image は枝の中にも置けない）', () => {
+      const error = readAndFail(
+        defWith([
+          {
+            key: 'trap',
+            type: 'oneOf',
+            discriminator: 'name',
+            variants: [{ value: '坂道', fields: [{ key: 'photo', type: 'image' }] }],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('variants[0].fields[0]')
+      expect(error.message).toContain('image')
+    })
+
     it('同梱の迷宮マップ定義は、この検証を通っている', () => {
       const def = readBundledTemplates().find((d) => d.id === 'builtin.dungeon-map')!
       const rooms = def.fields.find((f) => f.key === 'rooms')!
       expect(rooms.type).toBe('array')
       expect(rooms.fields!.map((f) => f.key)).toContain('traps')
-      // ⚠ ドメイン型を実際に含んでいる（`ref` / `oneOf` が完了条件 #6 の検証体）
+      // ⚠ ドメイン型を実際に含んでいる（C 群まで入ったので、全 13 種のうち 11 種が同梱定義に在る）
       expect(rooms.fields!.map((f) => f.type)).toContain('coordinate')
     })
   })

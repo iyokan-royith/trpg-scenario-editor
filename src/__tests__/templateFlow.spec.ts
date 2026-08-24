@@ -237,3 +237,77 @@ describe('フォームの画像欄から作った素材（利用者定義テン�
     expect(store.imageFieldKeyOfInstance(instanceId)).toBe('photo')
   })
 })
+
+/**
+ * ⭐⭐ §1-3 の `要検証` を閉じる 1 本——
+ * 「**判別子付き共用体のフォームを P2 で実装しきれるか**」の閉じる条件は
+ * **サンプル定義でどちらの枝も入力できること**であって、「作ると決めたこと」ではない。
+ *
+ * ⚠ だから**同梱の迷宮マップ定義**（配布されている当のもの）を使い、
+ *   画面から両方の枝を打ち、保存し、**リロード相当（IndexedDB からの読み直し）**まで見る。
+ */
+describe('判別子付き共用体は、同梱定義の両方の枝が入力できる（§1-3 の要検証）', () => {
+  it('⭐ 「坂道（高い方つき）」と「幻の路（判別子だけ）」を入れて保存し、読み直せる', async () => {
+    const app = await mountApp()
+    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+
+    const corridors = app
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('道'))!
+    await corridors.find('.field__add').trigger('click')
+    await corridors.find('.field__add').trigger('click')
+
+    const items = corridors.findAll('.field__item')
+    expect(items).toHaveLength(2)
+
+    // 1 件目: 坂道 → 追加項目（高い方＝座標）が出る
+    const first = items[0]!
+    await first.find('.field--oneOf .field--enum select').setValue('坂道')
+    const higher = first.find('.field--oneOf .field--coordinate')
+    expect(higher.exists()).toBe(true)
+    await higher.find('.field--enum select').setValue('B')
+    await higher.find('.field--integer input').setValue('1')
+
+    // 2 件目: 幻の路 → 追加項目は出ない（判別子だけの枝）
+    const second = items[1]!
+    await second.find('.field--oneOf .field--enum select').setValue('幻の路')
+    expect(second.find('.field--oneOf .field--coordinate').exists()).toBe(false)
+
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    // ⚠⚠ 読み直し（IndexedDB）まで見る。ここで初めて「保存された形」が確かめられる。
+    const saved = await loadInstances()
+    expect(saved).toHaveLength(1)
+    const rows = saved[0]!.data.corridors as Record<string, unknown>[]
+    expect(rows[0]!.trap).toEqual({ name: '坂道', higherEnd: { row: 'B', col: 1 } })
+    // ⚠ 判別子だけの枝が、判別子だけの形で残っている（`{}` にも `undefined` にもならない）
+    expect(rows[1]!.trap).toEqual({ name: '幻の路' })
+  })
+
+  it('⭐ 遭遇（共有フィールドつきの `oneOf`）も両方の枝が入り、読み直せる', async () => {
+    const app = await mountApp()
+    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+
+    const rooms = app
+      .findAll('.field--array')
+      .find((f) => f.find('legend').text().startsWith('部屋'))!
+    await rooms.find('.field__add').trigger('click')
+    const room = rooms.find('.field__item')
+    const encounter = room.find('.field--oneOf')
+
+    // 共有フィールド（種別）は枝を選ぶ前から出ている
+    const selects = encounter.findAll('.field--enum select')
+    await selects[0]!.setValue('battlefield') // 種類（判別子）
+    await selects[1]!.setValue('敵対') // 共有フィールド
+    expect(encounter.text()).toContain('戦場')
+
+    await app.find('form.tform').trigger('submit')
+    await flushPromises()
+
+    const saved = await loadInstances()
+    const savedRooms = saved[0]!.data.rooms as Record<string, unknown>[]
+    // ⚠ 共有フィールドと判別子が両方残る（枝の中身は空なので書かれない）
+    expect(savedRooms[0]!.encounter).toEqual({ shape: 'battlefield', kind: '敵対' })
+  })
+})

@@ -14,11 +14,11 @@ export type PartForm = 'section' | 'inline' | 'figure'
 
 /**
  * フォームに出る入力欄の型（1-3 の表）。
- * ⚠ v0 で**フォームまで実装済み**なのは基本型 7 種＋ドメイン型 4 種
- *   （`coordinate` / `direction` / `edgeRef` / `image`）。
- *   `derived` は**これからも尋ねない**（導出値なので・`NEVER_ASKED_FIELD_TYPES`）、
- *   `ref` / `oneOf` は**まだ**入力できない（§1-3-3a の判断待ち）。
+ * ⚠ v0 では **`derived` を除く 13 種すべてがフォームから入力できる**（2026-08-24・C 群まで完了）。
+ *   `derived` は**これからも尋ねない**（導出値なので・`NEVER_ASKED_FIELD_TYPES`）。
  *   → 単一の真実は `template/form.ts` の `SUPPORTED_FIELD_TYPES` / `NEVER_ASKED_FIELD_TYPES`。
+ *   ⚠⚠ **2 つの集合の和が、この一覧と一致していなければならない**（`form.spec.ts` が固定）。
+ *   どちらにも入らない型を足すと、その欄は**画面から黙って消える**。
  */
 export const FIELD_TYPES = [
   'string',
@@ -38,6 +38,21 @@ export const FIELD_TYPES = [
 ] as const
 
 export type FieldType = (typeof FIELD_TYPES)[number]
+
+/**
+ * `oneOf`（判別子付き共用体）の枝 1 本（1-3・1-3-3c）。
+ *
+ * ⚠ 保存形は**フラット**である——`{ [discriminator]: value, ...共有, ...この枝の fields }`。
+ *   実物がそうなっている（`{name:'坂道', higherEnd:{…}}` / `{kind:'友好', shape:'enemies', enemies:[…]}`）。
+ */
+export interface VariantDef {
+  /** 判別子に入る値。⚠ **保存される**（§1-8-2b） */
+  value: string
+  /** 選択肢の表示名。⚠ 省略時は `value` を出す（`shape` のように値が英語のときに使う） */
+  label?: string
+  /** この枝でだけ出るフィールド */
+  fields?: FieldDef[]
+}
 
 export interface FieldDef {
   key: string
@@ -61,6 +76,25 @@ export interface FieldDef {
    *   要素はオブジェクトでなければならない——スカラーには `id` を付ける場所が無い。
    */
   fields?: FieldDef[]
+  /**
+   * `oneOf` の判別子のキー。⚠ **保存形に現れる**（罠は `name`・遭遇は `shape`）。
+   * ⚠ `ref` は型が決めている（`kind`）ので宣言しない。
+   */
+  discriminator?: string
+  /** `oneOf` の枝。⚠ `ref` は型が決めている（`room` / `corridor` / `roomElement`）ので宣言しない。 */
+  variants?: VariantDef[]
+  /**
+   * ⚠⚠ **内部専用**（利用者の JSON では宣言できない・`schema.ts` が弾く）。
+   *   「この欄は同じ型を n 個持つ（並びに意味がある固定長）」。
+   *   `ref` の `corridor` が持つ `ends: [座標, 座標]` のためだけに在る——
+   *   `array` は要素がオブジェクトで `id` を持つ契約なので、**座標の対を表せない**。
+   */
+  tuple?: number
+  /**
+   * ⚠⚠ **内部専用**（同上）。`enum` の値 → 表示名。
+   *   判別子の値が英語のとき（`enemies` → 「敵の列挙」）に、画面へ日本語を出すために使う（§1-8-1）。
+   */
+  choiceLabels?: Record<string, string>
 }
 
 export interface TemplateDefinition {

@@ -8,7 +8,12 @@
  */
 import { FIELD_TYPES, type FieldDef, type FieldType, type TemplateDefinition } from './model'
 import { ITEM_ID_KEY } from './form'
-import { isCompositeFieldType } from './domain'
+import {
+  allVariantFieldsOf,
+  discriminatorKeyOf,
+  isCompositeFieldType,
+  isVariantFieldType,
+} from './domain'
 import type { OutputDef } from './outputs'
 import { builtinPatternNames } from './render'
 
@@ -110,6 +115,33 @@ function checkFields(
         `${path} に image は置けません（画像の欄は入れ子・配列の中には作れません。いちばん外側に置いてください）`,
       )
     }
+    // ⚠⚠ **内部専用のプロパティは利用者の JSON では宣言させない**（`domain.ts` が付けるもの）。
+    //   黙って効かせると、保存形が型の契約から外れる経路が利用者側に開く。
+    for (const internal of ['tuple', 'choiceLabels'] as const) {
+      if (internal in field) {
+        problems.push(`${path}.${internal} は書けません（内部でだけ使う指定です）`)
+      }
+    }
+    // ⭐ 判別子付き共用体（`oneOf` / `ref`）。
+    if (typeof field.type === 'string' && isVariantFieldType(field.type as FieldType)) {
+      checkVariantField(field, path, problems)
+      // ⚠⚠ 検めるのは**利用者が書いたもの**だけ。`ref` の枝は型が持っている内部宣言なので
+      //   ここへ通さない（通すと `domain.ts` が付ける `tuple` を「書けません」と弾いてしまう）。
+      if (field.type === 'oneOf') {
+        // 枝の中のフィールドも同じ検査を通す（⚠ 入れ子扱い＝この中に image は置けない）
+        const declared = Array.isArray(field.variants) ? field.variants : []
+        declared.forEach((variant, i) => {
+          if (isPlainObject(variant) && Array.isArray(variant.fields)) {
+            checkFields(variant.fields, problems, `${path}.variants[${i}].fields`, false, true)
+          }
+        })
+        // 共有フィールド（どの枝でも出るもの）
+        if (Array.isArray(field.fields)) {
+          checkFields(field.fields, problems, `${path}.fields`, false, true)
+        }
+      }
+      return
+    }
     if (field.type === 'object' || field.type === 'array') {
       const children = field.fields
       if (!Array.isArray(children) || children.length === 0) {
@@ -123,6 +155,67 @@ function checkFields(
       checkFields(children, problems, `${path}.fields`, field.type === 'array', true)
     }
   })
+}
+
+/**
+ * `oneOf` / `ref` の宣言を検める。
+ *
+ * ⚠ `ref` は**枝を型が持っている**ので、宣言されていたら弾く（合成型の `fields` と同じ線）。
+ * ⚠⚠ 保存形は**フラットな併合**（`{[判別子]: 値, ...共有, ...枝}`）なので、
+ *   **判別子・共有・全部の枝でキーが 1 つでも重なると、下書きが壊れる**（同じキーに違う型が入る）。
+ */
+function checkVariantField(
+  field: Record<string, unknown>,
+  path: string,
+  problems: string[],
+): void {
+  if (field.type === 'ref') {
+    for (const declared of ['discriminator', 'variants'] as const) {
+      if (declared in field) {
+        problems.push(
+          `${path}.${declared} は書けません（ref の枝は型が決めています: 部屋 / 通路 / 部屋内要素）`,
+        )
+      }
+    }
+    return
+  }
+  checkString(field.discriminator, `${path}.discriminator`, problems)
+  const variants = field.variants
+  if (!Array.isArray(variants) || variants.length === 0) {
+    problems.push(`${path}.variants がありません（oneOf は枝を 1 つ以上宣言する必要があります）`)
+    return
+  }
+  const seenValues = new Set<string>()
+  variants.forEach((variant, i) => {
+    const where = `${path}.variants[${i}]`
+    if (!isPlainObject(variant)) {
+      problems.push(`${where} がオブジェクトではありません（${JSON.stringify(variant)}）`)
+      return
+    }
+    checkString(variant.value, `${where}.value`, problems)
+    if (typeof variant.value === 'string') {
+      if (seenValues.has(variant.value)) {
+        problems.push(`${where}.value が重複しています（「${variant.value}」）`)
+      }
+      seenValues.add(variant.value)
+    }
+  })
+  // ⚠ フラットに併合されるので、判別子・共有・全部の枝を通してキーが一意でなければならない。
+  const keys = allVariantFieldsOf(field as unknown as FieldDef).map((f) => f?.key)
+  const seenKeys = new Set<string>()
+  for (const key of keys) {
+    if (typeof key !== 'string') continue
+    if (seenKeys.has(key)) {
+      problems.push(
+        `${path} のキー「${key}」が重複しています（判別子・共有・枝は 1 つの入れ物に併合されます）`,
+      )
+    }
+    seenKeys.add(key)
+  }
+  const discriminator = discriminatorKeyOf(field as unknown as FieldDef)
+  if (discriminator && keys.filter((key) => key === discriminator).length > 1) {
+    problems.push(`${path}.discriminator「${discriminator}」と同じ名前のフィールドがあります`)
+  }
 }
 
 function checkOutputs(value: unknown, problems: string[]): void {

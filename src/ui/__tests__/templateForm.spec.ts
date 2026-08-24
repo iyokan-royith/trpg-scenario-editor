@@ -202,8 +202,8 @@ async function expandAllArrays(wrapper: ReturnType<typeof mountForm>) {
 
 describe('未対応の型があってもフォームが開ける（完了条件 #6）', () => {
   it('⭐ 同梱の迷宮マップ定義（ドメイン型を 6 種含む）でフォームが出る', async () => {
-    // ⚠ この 1 本は「まだ入力できません」の欄が**残っている**ことを見る（`ref` / `oneOf`）。
-    //   ドメイン型 4 種は入力できるようになったので、下の describe が別に見る。
+    // ⚠ C 群（`oneOf` / `ref`）が入り、**未対応の欄は 1 つも残っていない**。
+    //   ⚠⚠ 分岐そのものは残してある（新しい型が足されたときの受け皿）。
     // ⚠ 手で作った定義ではなく**配布されている当のもの**を読む。
     //   ここが落ちると、実機で「テンプレを選んだ瞬間に画面が真っ白」になる。
     const def = readTemplateDefinition(dungeonMapText, 'src/templates/dungeon-map.json')
@@ -213,30 +213,21 @@ describe('未対応の型があってもフォームが開ける（完了条件 
     expect(wrapper.findAll('.field--string input').length).toBeGreaterThan(0)
 
     await expandAllArrays(wrapper)
-    // 未対応の欄も「出ていない」のではなく「入力できないと分かる形で出ている」
-    const unsupported = wrapper.findAll('.field__unsupported')
-    expect(unsupported.length).toBeGreaterThan(0)
-    expect(unsupported[0]!.text()).toContain('まだ入力できません')
+    expect(wrapper.findAll('.field__unsupported')).toHaveLength(0)
   })
 
-  it('⏸ まだ入力できないのは `ref` と `oneOf` の 2 種だけ（内部名も漏れない・§1-8-2c）', async () => {
+  it('⭐ 同梱定義の欄に「まだ入力できません」は 1 つも出ない（C 群で未対応が空になった）', async () => {
     const def = readTemplateDefinition(dungeonMapText, 'src/templates/dungeon-map.json')
     const wrapper = mountForm(def)
     await expandAllArrays(wrapper)
-    const text = wrapper
-      .findAll('.field__unsupported')
-      .map((n) => n.text())
-      .join('\n')
-    for (const internal of ['ref', 'oneOf'] as const) {
-      expect(text).not.toContain(internal)
-      expect(text).toContain(FIELD_TYPE_LABELS[internal])
+    // ⚠⚠ 文字列そのもので見る（クラス名だけだと、文言を残したまま別のクラスへ移しても通る）
+    expect(wrapper.text()).not.toContain('まだ入力できません')
+    // ⚠ 内部の型名が画面に漏れていないこと（§1-8-2c）は、未対応が空になっても要る
+    for (const internal of ['coordinate', 'edgeRef', 'oneOf', 'ref', 'derived'] as const) {
+      expect(wrapper.text()).not.toContain(internal)
     }
-    // ⚠⚠ 入力できるようになった 4 種が、まだここに残っていないこと（＝欄が出ているはず）。
-    for (const done of ['coordinate', 'direction', 'edgeRef', 'image'] as const) {
-      expect(text).not.toContain(FIELD_TYPE_LABELS[done])
-    }
-    // ⚠ 導出値は別の文言・別のクラスで出る（下の describe が見る）
-    expect(text).not.toContain(FIELD_TYPE_LABELS.derived)
+    // 導出値だけは「尋ねない」と出ている（`FIELD_TYPE_LABELS` は日本語）
+    expect(wrapper.text()).toContain(FIELD_TYPE_LABELS.derived)
   })
 
   /**
@@ -477,5 +468,160 @@ describe('整数でない値は保存されない（§1-3-1 決定 4）', () => 
     await wrapper.find('.field--integer input').setValue('')
     const data = await save(wrapper)
     expect('count' in data).toBe(false)
+  })
+})
+
+/**
+ * C 群: 判別子付き共用体（`oneOf`）と参照（`ref`）を**画面の側から**通す（§1-3-3c）。
+ *
+ * ⚠ ここでいちばん大事なのは「選択肢を選ぶと追加項目が出る」ことと、
+ *   **枝を切り替えても前の枝の値が失われない**こと（§1-9-3a の逐一確認が不要である根拠）。
+ */
+const VARIANT_DEF = readTemplateDefinition(
+  JSON.stringify({
+    id: 'test.variant',
+    name: '共用体',
+    version: '0.1.0',
+    fields: [
+      {
+        key: 'encounter',
+        type: 'oneOf',
+        label: '遭遇',
+        fields: [{ key: 'kind', type: 'enum', label: '種別', choices: ['友好', '敵対'] }],
+        discriminator: 'shape',
+        variants: [
+          {
+            value: 'enemies',
+            label: '敵の列挙',
+            fields: [
+              {
+                key: 'enemies',
+                type: 'array',
+                label: '敵',
+                fields: [{ key: 'name', type: 'string', label: '名前' }],
+              },
+            ],
+          },
+          {
+            value: 'battlefield',
+            label: '戦場',
+            fields: [{ key: 'battlefield', type: 'string', label: '戦場' }],
+          },
+        ],
+      },
+      { key: 'target', type: 'ref', label: '対象' },
+    ],
+    outputs: [{ kind: 'fixed', key: 'target', label: '対象', form: 'section' }],
+  }),
+  'test.variant',
+)
+
+describe('判別子付き共用体が入力できる（§1-3-3 C 群）', () => {
+  /** その `oneOf` の「種類」の select。⚠ 中の欄と取り違えないよう、直下の1つ目を取る。 */
+  function kindSelect(wrapper: ReturnType<typeof mountForm>, root = '.field--oneOf') {
+    return wrapper.find(`${root} > fieldset > .field--enum select, ${root} .field--enum select`)
+  }
+
+  it('⭐ 種類の選択肢は日本語で出て、保存される値は宣言どおり（`enemies`）', async () => {
+    const wrapper = mountForm(VARIANT_DEF)
+    const labels = wrapper.findAll('.field--oneOf .field--enum option').map((o) => o.text())
+    expect(labels).toContain('敵の列挙')
+    expect(labels).toContain('戦場')
+    // ⚠⚠ 画面に内部値が出ていない（§1-8-2c）
+    expect(labels.join('')).not.toContain('enemies')
+
+    await kindSelect(wrapper).setValue('enemies')
+    const data = await save(wrapper)
+    expect((data.encounter as Record<string, unknown>).shape).toBe('enemies')
+  })
+
+  it('⭐⭐ 種類を選ぶと、その枝の追加項目が出る（選ぶ前は出ていない）', async () => {
+    const wrapper = mountForm(VARIANT_DEF)
+    // 選ぶ前: 枝の欄はどこにも無い
+    expect(wrapper.find('.field--oneOf .field--array').exists()).toBe(false)
+
+    await kindSelect(wrapper).setValue('enemies')
+    expect(wrapper.find('.field--oneOf .field--array').exists()).toBe(true)
+
+    // 別の枝へ切り替えると、前の枝の欄は消えて新しい枝の欄が出る
+    await kindSelect(wrapper).setValue('battlefield')
+    expect(wrapper.find('.field--oneOf .field--array').exists()).toBe(false)
+    expect(wrapper.findAll('.field--oneOf .field--string').length).toBeGreaterThan(0)
+  })
+
+  it('⭐⭐ 枝を切り替えて戻すと、前に打った値が戻る（切り替えは破壊操作ではない）', async () => {
+    // ⚠⚠ これが「§1-9-3a の逐一確認は要らない」と判断した根拠そのもの。
+    //   ここが赤くなったら、切り替えは**下書きが失われる操作**なので確認を出す側へ回る。
+    const wrapper = mountForm(VARIANT_DEF)
+    await kindSelect(wrapper).setValue('enemies')
+    await wrapper.find('.field--oneOf .field--array .field__add').trigger('click')
+    await wrapper.find('.field--oneOf .field--array .field--string input').setValue('スライム')
+
+    await kindSelect(wrapper).setValue('battlefield')
+    await kindSelect(wrapper).setValue('enemies')
+
+    const input = wrapper.find('.field--oneOf .field--array .field--string input')
+    expect((input.element as HTMLInputElement).value).toBe('スライム')
+  })
+
+  it('⭐ 保存されるのは選ばれた枝だけ（隠れた枝の値は保存されない）', async () => {
+    const wrapper = mountForm(VARIANT_DEF)
+    await kindSelect(wrapper).setValue('enemies')
+    await wrapper.find('.field--oneOf .field--array .field__add').trigger('click')
+    await wrapper.find('.field--oneOf .field--array .field--string input').setValue('スライム')
+    await kindSelect(wrapper).setValue('battlefield')
+
+    const encounter = (await save(wrapper)).encounter as Record<string, unknown>
+    expect(encounter.shape).toBe('battlefield')
+    // ⚠⚠ 打ったのに保存されない、が**意図した挙動**（判別子が値を定義する）
+    expect('enemies' in encounter).toBe(false)
+  })
+
+  it('共有フィールド（種別）はどちらの枝でも出る', async () => {
+    const wrapper = mountForm(VARIANT_DEF)
+    const shared = () => wrapper.findAll('.field--oneOf .field--enum')[1]!
+    expect(shared().text()).toContain('種別')
+    await kindSelect(wrapper).setValue('battlefield')
+    expect(shared().text()).toContain('種別')
+  })
+
+  it('⭐ `ref` は種類を選ぶと座標の欄が出る（通路は座標が 2 つ）', async () => {
+    const wrapper = mountForm(VARIANT_DEF)
+    const select = wrapper.find('.field--ref .field--enum select')
+    await select.setValue('room')
+    expect(wrapper.findAll('.field--ref .field--coordinate')).toHaveLength(1)
+    expect(wrapper.find('.field--ref .field--tuple').exists()).toBe(false)
+
+    await select.setValue('corridor')
+    // ⚠ 固定長（`ends`）。⚠⚠ 「足す」ボタンは出さない（並びに意味がある）
+    expect(wrapper.find('.field--ref .field--tuple').exists()).toBe(true)
+    expect(wrapper.findAll('.field--ref .field--tuple .field--coordinate')).toHaveLength(2)
+    expect(wrapper.find('.field--ref .field__add').exists()).toBe(false)
+
+    const coordinates = wrapper.findAll('.field--ref .field--tuple .field--coordinate')
+    await coordinates[0]!.find('.field--enum select').setValue('A')
+    await coordinates[0]!.find('.field--integer input').setValue('2')
+    await coordinates[1]!.find('.field--enum select').setValue('B')
+    await coordinates[1]!.find('.field--integer input').setValue('3')
+
+    expect((await save(wrapper)).target).toEqual({
+      kind: 'corridor',
+      ends: [
+        { row: 'A', col: 2 },
+        { row: 'B', col: 3 },
+      ],
+    })
+  })
+
+  it('片端だけの通路は保存されず、理由が画面に出る', async () => {
+    const wrapper = mountForm(VARIANT_DEF)
+    await wrapper.find('.field--ref .field--enum select').setValue('corridor')
+    const first = wrapper.findAll('.field--ref .field--tuple .field--coordinate')[0]!
+    await first.find('.field--enum select').setValue('A')
+    await first.find('.field--integer input').setValue('2')
+
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.emitted('save')).toBeFalsy()
+    expect(wrapper.find('.tform__errors').text()).toContain('2 つとも')
   })
 })

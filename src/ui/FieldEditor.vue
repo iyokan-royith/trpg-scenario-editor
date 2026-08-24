@@ -9,7 +9,7 @@ import {
   isSupportedFieldType,
   labelOf,
 } from '../template/form'
-import { childFieldsOf, choicesOf } from '../template/domain'
+import { childFieldsOf, choicesOf, isVariantFieldType, visibleFieldsOf } from '../template/domain'
 
 /**
  * 入力欄 1 つ（DESIGN-v0.md §4 の P2 完了条件 #2・#3）。
@@ -43,6 +43,36 @@ const typeLabel = () => FIELD_TYPE_LABELS[props.field.type]
 
 /** ⚠ 合成型（座標・辺参照）の子は**型が決めている**。定義の `fields` は見ない（`domain.ts`）。 */
 const childFields = () => childFieldsOf(props.field)
+
+/**
+ * ⭐ 判別子付き共用体（`oneOf` / `ref`）でいま出す欄＝**判別子 + 共有 + 選ばれた枝**。
+ *
+ * ⚠⚠ 枝を切り替えても、**前の枝に打った値は消さない**（下書きに残り、戻せば出てくる）。
+ *   → だから切り替えは「下書きが失われる操作」ではなく、§1-9-3a の逐一確認は要らない。
+ *   ⚠ 保存では選ばれた枝だけが書かれる（判別子が値を定義する・`pruneEmpty`）。
+ */
+const isVariant = () => isVariantFieldType(props.field.type)
+const variantFields = () => visibleFieldsOf(props.field, props.modelValue)
+
+/** 固定長（`ends: [座標, 座標]`）の各要素の宣言。⚠ 中身は 1 つのときと同じ部品で描く。 */
+const tupleFields = () =>
+  Array.from({ length: props.field.tuple ?? 0 }, (_, index) => ({
+    ...props.field,
+    tuple: undefined,
+    label: `${labelOf(props.field)} ${index + 1} つ目`,
+  }))
+
+function tupleItems(): unknown[] {
+  const values = Array.isArray(props.modelValue) ? props.modelValue : []
+  return Array.from({ length: props.field.tuple ?? 0 }, (_, index) => values[index])
+}
+
+function updateTupleItem(index: number, value: unknown) {
+  emit(
+    'update:modelValue',
+    tupleItems().map((item, i) => (i === index ? value : item)),
+  )
+}
 
 /** 文字列として画面に出す値。⚠ 型が合わないデータ（古い保存など）でも落ちないように畳む。 */
 function asText(): string {
@@ -153,7 +183,10 @@ function imageName(): string {
 </script>
 
 <template>
-  <div class="field" :class="`field--${field.type}`">
+  <!-- ⚠ 固定長は入れ物にも印を付ける。付けないと、入れ物と中身が**同じクラス**になり
+       （`ends` は「座標が 2 つ」なので入れ物も `field--coordinate`）、
+       数えたときに 2 のはずが 3 に見える。 -->
+  <div class="field" :class="[`field--${field.type}`, { 'field--tuple': field.tuple !== undefined }]">
     <!-- ⭐⭐ 尋ねない型（導出値）: 「まだ」ではない。待っても入力欄は出ない（§1-3-3） -->
     <p v-if="neverAsked()" class="field__derived">
       <span class="field__label">{{ labelOf(field) }}</span>
@@ -165,6 +198,18 @@ function imageName(): string {
       <span class="field__label">{{ labelOf(field) }}</span>
       <span class="field__note">（{{ typeLabel() }}）はまだ入力できません</span>
     </p>
+
+    <!-- ⚠ 固定長（中身の型より**先に**見る。`ends` は「座標」ではなく「座標が 2 つ」）（`ends`）。並びに意味があるので「足す・消す」は出さない -->
+    <fieldset v-else-if="field.tuple !== undefined" class="field__group field__tuple">
+      <legend>{{ labelOf(field) }}</legend>
+      <FieldEditor
+        v-for="(child, index) in tupleFields()"
+        :key="index"
+        :field="child"
+        :modelValue="tupleItems()[index]"
+        @update:modelValue="(value: unknown) => updateTupleItem(index, value)"
+      />
+    </fieldset>
 
     <label v-else-if="field.type === 'string'" class="field__row">
       <span class="field__label">{{ labelOf(field) }}</span>
@@ -192,8 +237,8 @@ function imageName(): string {
       <select :value="asText()" @change="onEnum">
         <!-- ⚠ 空の選択肢を必ず置く。無いと「選んでいない」を表せず、先頭の値が黙って入る -->
         <option value="">（選んでいません）</option>
-        <option v-for="choice in choices()" :key="choice" :value="choice">
-          {{ choice }}
+        <option v-for="choice in choices()" :key="choice.value" :value="choice.value">
+          {{ choice.label }}
         </option>
       </select>
     </label>
@@ -205,6 +250,18 @@ function imageName(): string {
       <span class="field__imageName">{{ imageName() }}</span>
       <button v-if="hasImage()" type="button" @click="clearImage">画像を外す</button>
     </div>
+
+    <!-- ⭐⭐ 判別子付き共用体。⚠ `ref` も同じ枝を通る（枝を型が持っているだけの違い） -->
+    <fieldset v-else-if="isVariant()" class="field__group field__variant">
+      <legend>{{ labelOf(field) }}</legend>
+      <FieldEditor
+        v-for="child in variantFields()"
+        :key="child.key"
+        :field="child"
+        :modelValue="objectValue()[child.key]"
+        @update:modelValue="(value: unknown) => updateChild(child.key, value)"
+      />
+    </fieldset>
 
     <!-- ⭐ 座標・辺参照は**合成**（`domain.ts`）。入れ子と同じ経路で描く＝新しい概念を足さない -->
     <fieldset
