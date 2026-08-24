@@ -517,9 +517,13 @@ const VARIANT_DEF = readTemplateDefinition(
 )
 
 describe('判別子付き共用体が入力できる（§1-3-3 C 群）', () => {
-  /** その `oneOf` の「種類」の select。⚠ 中の欄と取り違えないよう、直下の1つ目を取る。 */
+  /**
+   * その `oneOf` の「種類」（判別子）の select。
+   * ⚠ 判別子は `visibleFieldsOf()` が**必ず先頭に置く**ので、最初の enum がこれ。
+   *   共有フィールド（種別）は 2 つ目——取り違えると別の欄を打つので、ここで名前を付けておく。
+   */
   function kindSelect(wrapper: ReturnType<typeof mountForm>, root = '.field--oneOf') {
-    return wrapper.find(`${root} > fieldset > .field--enum select, ${root} .field--enum select`)
+    return wrapper.findAll(`${root} .field--enum select`)[0]!
   }
 
   it('⭐ 種類の選択肢は日本語で出て、保存される値は宣言どおり（`enemies`）', async () => {
