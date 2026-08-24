@@ -120,6 +120,29 @@ describe('複数パートの素材で「消す」が嘘をつかない（S7-2）
     // ⚠ 数え漏らしも元の欠陥（押した行のパートしか数えていなかった）
     expect(notice).toContain('2 箇所')
   })
+
+  /**
+   * ⚠⚠ 「素材の 1 行目」に固定すると、**その行が絞り込みで隠れた瞬間に消す手段が消える**。
+   *   だから付ける先は「**いま見えている中の 1 行目**」でなければならない。
+   *   → この性質は `headKeys` が `visibleParts` を見ているかどうかで決まり、
+   *     `props.parts` を見る実装でも**絞り込み無しの検査は全部緑になる**（＝ここでしか捕まらない）。
+   */
+  it('⭐ 絞り込みで先頭の行が隠れても、消す手段は残る（見えている先頭に付け替わる）', async () => {
+    await mountApp()
+    await createDungeonWithTwoRooms('ためしの迷宮')
+
+    // 先頭のパートだけを本文へ置く → 「未配置だけ」で先頭の行が消える
+    await buttonIn(0, '本文へ挿入')!.trigger('click')
+    await flushPromises()
+    await wrapper!.find('.materials__filter input').setValue(true)
+
+    expect(rows()).toHaveLength(3)
+    expect(buttonTextsOf(0).some((t) => t.includes('消す'))).toBe(true)
+    // ⚠ 消えるのは**見えていない先頭も含めた全部**なので、件数は 3 ではなく 4
+    expect(buttonIn(0, '素材ごと消す')!.text()).toContain('4 件')
+    // ⚠ 増殖もしていない（見えている行すべてに付いたら元の欠陥に戻る）
+    expect([0, 1, 2].filter((i) => buttonTextsOf(i).some((t) => t.includes('消す')))).toEqual([0])
+  })
 })
 
 describe('「差し替え」は画像を持つ素材にしか出ない（S7-3）', () => {
