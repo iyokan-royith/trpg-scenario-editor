@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import type { TemplateDefinition } from '../template/model'
-import TemplateForm from './TemplateForm.vue'
 
 /**
  * テンプレート一覧（DESIGN-v0.md §4 の P2 完了条件 #1・1-7-1 の「テンプレート一覧」）。
@@ -11,18 +9,13 @@ import TemplateForm from './TemplateForm.vue'
  *
  * ⚠ 素材一覧（`MaterialPane.vue`）とは**層が違う**（1-7-1）。
  *   こちらは「何を作れるか」＝定義の一覧、あちらは「何が置けるか」＝パートの一覧。
+ *
+ * ⚠⚠ **ここはフォームを持たない**（§1-9-3・2026-08-24）。以前は選択状態とフォームを
+ *   自分の中に抱えていたが、そのせいで**フォームの表示位置が右ペインの幅（18rem）に
+ *   構造的に縛られていた**。選んだことを上へ出すだけにして、開く場所は `App.vue` が決める。
  */
-defineProps<{ definitions: TemplateDefinition[] }>()
-const emit = defineEmits<{ create: [templateId: string, data: Record<string, unknown>] }>()
-
-const selected = ref<TemplateDefinition | null>(null)
-
-function onSave(data: Record<string, unknown>) {
-  const def = selected.value
-  if (!def) return
-  emit('create', def.id, data)
-  selected.value = null
-}
+defineProps<{ definitions: TemplateDefinition[]; selectedId: string | null }>()
+const emit = defineEmits<{ select: [def: TemplateDefinition] }>()
 </script>
 
 <template>
@@ -34,19 +27,13 @@ function onSave(data: Record<string, unknown>) {
         <button
           type="button"
           class="tpane__item"
-          :class="{ 'tpane__item--selected': selected?.id === def.id }"
-          @click="selected = def"
+          :class="{ 'tpane__item--selected': selectedId === def.id }"
+          @click="emit('select', def)"
         >
           {{ def.name }}
         </button>
       </li>
     </ul>
-    <TemplateForm
-      v-if="selected"
-      :def="selected"
-      @save="onSave"
-      @cancel="selected = null"
-    />
   </section>
 </template>
 

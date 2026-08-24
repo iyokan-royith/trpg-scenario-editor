@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { TemplateDefinition } from '../template/model'
-import { createDraft, pruneEmpty, validateDraft } from '../template/form'
+import { createDraft, isDraftDirty, pruneEmpty, validateDraft } from '../template/form'
 import FieldEditor from './FieldEditor.vue'
 
 /**
@@ -11,7 +11,15 @@ import FieldEditor from './FieldEditor.vue'
  *   ここは「下書きを作る・保存する・やめる」だけを持つ。
  */
 const props = defineProps<{ def: TemplateDefinition }>()
-const emit = defineEmits<{ save: [data: Record<string, unknown>]; cancel: [] }>()
+const emit = defineEmits<{
+  save: [data: Record<string, unknown>]
+  cancel: []
+  /**
+   * 下書きに値が入っているか（§1-9-2 の未保存の印）。
+   * ⚠ タブの印を出すのは**器の側**なので、ここは「打ちかけかどうか」だけを外へ出す。
+   */
+  'update:dirty': [dirty: boolean]
+}>()
 
 const draft = ref<Record<string, unknown>>(createDraft(props.def.fields))
 /** 直前の保存操作で見つかった誤り（§1-3-1 決定 4）。空なら何も出さない。 */
@@ -26,6 +34,14 @@ watch(
     errors.value = []
   },
 )
+
+/**
+ * ⚠ `immediate: true` にしてある。**mount した瞬間に 1 度出す**のが要点で、
+ *   これが無いと「保存でタブが閉じる → 別のテンプレを選び直す」ときに
+ *   **前の下書きの印が残ったまま**になる（閉じるときは destroy されるので emit が来ない）。
+ */
+const dirty = computed(() => isDraftDirty(props.def.fields, draft.value))
+watch(dirty, (value) => emit('update:dirty', value), { immediate: true })
 
 function onSubmit() {
   // ⚠⚠ **保存の手前で弾く**（§1-3-1 決定 4）。黙って切り捨てない。

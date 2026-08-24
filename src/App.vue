@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { EditorContent, type Editor } from '@tiptap/vue-3'
 import { createDocumentEditor } from './document/editor'
 import { flattenOutline, outline } from './document/outline'
@@ -10,6 +10,9 @@ import { documentSchema } from './document/schema'
 import OutlinePane from './ui/OutlinePane.vue'
 import MaterialPane from './ui/MaterialPane.vue'
 import TemplatePane from './ui/TemplatePane.vue'
+import TemplateForm from './ui/TemplateForm.vue'
+import CenterTabs from './ui/CenterTabs.vue'
+import type { CenterTab } from './ui/centerTabs'
 import { usePartStore } from './store/partStore'
 import {
   createAutoSaver,
@@ -26,7 +29,12 @@ import {
   PART_REF_NODE,
 } from './document/partRefExtension'
 import { legacyImagePartIdRemap, IMAGE_TEMPLATE_ID } from './template/render/image'
-import { partKeyOf, type Part, type TemplateInstance } from './template/model'
+import {
+  partKeyOf,
+  type Part,
+  type TemplateDefinition,
+  type TemplateInstance,
+} from './template/model'
 
 /**
  * v0 の画面。左に見出しツリー、右に 1 枚の連続文書（CONCEPT Q5）。
@@ -62,6 +70,70 @@ const placement = computed(() => {
 const unplacedKeys = computed(() =>
   placement.value.unplaced.map((p) => partKeyOf(p.instanceId, p.partId)),
 )
+
+/**
+ * ⭐ 中央ペインのタブ（DESIGN-v0.md §1-9）。
+ *
+ * ⚠ **これは新機能ではなく、仕様に戻す作業**（§1-9-1）。CONCEPT が最初から
+ *   「まんなかにテキストエディタ、**もしくは固有エディタ**」と書いている。
+ *
+ * ⚠⚠ **閉じるのは明示操作のときだけ**（保存／やめる／タブの ✕）。
+ *   左ペインのクリック・md 書き出しは**本文タブへ移るだけ**でフォームは閉じない——
+ *   モードの暗黙切り替えだと「下書きが失われたのか隠れただけなのか」を利用者が見分けられない。
+ */
+const BODY_TAB_ID = 'body'
+const FORM_TAB_ID = 'form'
+
+/** いま開いているテンプレのフォーム（`null` ならフォームのタブは無い）。 */
+const selectedTemplate = ref<TemplateDefinition | null>(null)
+/** フォームの下書きに値が入っているか。⚠ 判定はフォーム側（`isDraftDirty`）。 */
+const formDirty = ref(false)
+const activeTabId = ref<string>(BODY_TAB_ID)
+
+/**
+ * ⚠ **フォームのタブは同時に 1 つ**（§1-9-2）。ただし**器は複数タブ前提**なので、
+ *   ここが配列を渡す形になっている（増やすときは push を足すだけ）。
+ */
+const centerTabs = computed<CenterTab[]>(() => {
+  const tabs: CenterTab[] = [{ id: BODY_TAB_ID, label: '本文' }]
+  const def = selectedTemplate.value
+  if (def) {
+    tabs.push({ id: FORM_TAB_ID, label: def.name, closable: true, dirty: formDirty.value })
+  }
+  return tabs
+})
+
+/** テンプレを選んだ＝中央にフォームのタブを開く（§1-9-5 の #1）。 */
+function onSelectTemplate(def: TemplateDefinition) {
+  selectedTemplate.value = def
+  activeTabId.value = FORM_TAB_ID
+}
+
+/**
+ * フォームのタブを閉じる（保存／やめる／✕ の確認後）。
+ * ⚠ `formDirty` をここで落とす。閉じるときフォームは destroy されるので
+ *   `update:dirty` は**もう飛んでこない**——落とし忘れると、次に開いたタブに
+ *   前の下書きの印が点いたまま出る。
+ */
+function closeFormTab() {
+  selectedTemplate.value = null
+  formDirty.value = false
+  activeTabId.value = BODY_TAB_ID
+}
+
+function onCloseTab(tabId: string) {
+  if (tabId === FORM_TAB_ID) closeFormTab()
+}
+
+/**
+ * 本文タブへ移る。⚠ **フォームは閉じない**（§1-9-2）。
+ * ⚠ `await` が要る: 本文は `v-show`（＝`display: none`）で隠れているので、
+ *   描き直しの前に `focus()` すると当たらない。
+ */
+async function showBodyTab() {
+  activeTabId.value = BODY_TAB_ID
+  await nextTick()
+}
 
 const filePicker = ref<HTMLInputElement | null>(null)
 /**
@@ -223,7 +295,12 @@ function onDragEnd() {
   guide.value = null
 }
 
-function onSelect(pos: number) {
+/**
+ * 左ペインの見出しをクリック（§1-9-5 の #4）。
+ * ⚠⚠ **本文タブへ移るだけ。フォームのタブは残す。**
+ */
+async function onSelect(pos: number) {
+  await showBodyTab()
   editor.value?.commands.focus(pos + 1)
 }
 
@@ -277,9 +354,12 @@ async function onFileChosen(event: Event) {
  *   「単独の行にしたい」は**空の段落へ置く**ことで表す＝配置の側の話であって、
  *   パートの側で形を変える話ではない。
  */
-function onInsertMaterial(part: Part) {
+async function onInsertMaterial(part: Part) {
   const ed = editor.value
   if (!ed) return
+  // ⚠ 本文への操作なので本文タブへ移る（左ペインのクリックと同じ扱い・フォームは閉じない）。
+  //   隠れたままだと**挿さったものが見えず、`focus()` も当たらない**。
+  await showBodyTab()
   const type = part.form === 'section' ? PART_REF_NODE : PART_REF_INLINE_NODE
   // ⚠ `scrollIntoView: false` は意図的。挿し込むのは**利用者が直前に居た位置**なので、
   //   そこへ自動スクロールし直す必要が無い（画面が跳ねる方が邪魔になる）。
@@ -353,6 +433,15 @@ const replaceableInstanceIds = computed(() =>
  * ⚠ **パートは作らない。** データを足すだけで、パートは `derivePartsOf()` が導出する
  *   （P0 知見 1: 導出したものをデータ側に持たせない）。
  */
+async function onFormSave(data: Record<string, unknown>) {
+  const def = selectedTemplate.value
+  if (!def) return
+  // ⚠ 先に閉じる（§1-9-5 の #5「保存でフォームのタブが閉じ、本文へ戻る」）。
+  //   保存の成否を待ってから閉じると、書き込みが遅い環境で**押したのに閉じない**時間ができる。
+  closeFormTab()
+  await onCreateFromTemplate(def.id, data)
+}
+
 async function onCreateFromTemplate(templateId: string, data: Record<string, unknown>) {
   const instance = store.createInstance(templateId, data)
   try {
@@ -366,16 +455,19 @@ async function onCreateFromTemplate(templateId: string, data: Record<string, unk
   }
 }
 
-function exportMd() {
+/** ⚠ md の書き出し・読み込みは**本文への操作**なので本文タブへ移る（フォームは閉じない・§1-9-2）。 */
+async function exportMd() {
   const doc = editor.value?.state.doc
   if (!doc) return
+  await showBodyTab()
   md.value = docToMd(doc)
   mdOpen.value = true
 }
 
-function importMd() {
+async function importMd() {
   const ed = editor.value
   if (!ed) return
+  await showBodyTab()
   try {
     const doc = mdToDoc(md.value, ed.state.schema)
     ed.commands.setContent(doc.toJSON())
@@ -409,8 +501,32 @@ function importMd() {
         @dragOver="onDragOver"
         @dragEnd="onDragEnd"
       />
-      <main class="app__editor">
-        <EditorContent v-if="editor" :editor="editor" />
+      <!-- ⭐ 中央はタブ（§1-9）。「本文」は常にある固定タブで、テンプレのフォームは
+           タブとして開く。⚠⚠ 中身は器の側が `v-show` で保持する（`v-if` にしない）。 -->
+      <main class="app__center">
+        <CenterTabs
+          :tabs="centerTabs"
+          :activeId="activeTabId"
+          @select="activeTabId = $event"
+          @close="onCloseTab"
+        >
+          <template #body>
+            <!-- ⚠ この `v-if` は**初期化用**（エディタが立ち上がるまで）。
+                 タブの切り替えでは外れない（外すと Tiptap を作り直すことになる）。 -->
+            <div class="app__editor">
+              <EditorContent v-if="editor" :editor="editor" />
+            </div>
+          </template>
+          <template #form>
+            <TemplateForm
+              v-if="selectedTemplate"
+              :def="selectedTemplate"
+              @save="onFormSave"
+              @cancel="closeFormTab"
+              @update:dirty="formDirty = $event"
+            />
+          </template>
+        </CenterTabs>
       </main>
       <!-- ⚠ 右の列は 2 段。上が「何を作れるか」（定義）・下が「何が置けるか」（パート）。
            1-7-1 のとおり層が違うので混ぜない。 -->
@@ -418,7 +534,8 @@ function importMd() {
         <TemplatePane
           class="app__templates"
           :definitions="templateList"
-          @create="onCreateFromTemplate"
+          :selectedId="selectedTemplate?.id ?? null"
+          @select="onSelectTemplate"
         />
         <MaterialPane
           class="app__materials"
@@ -500,9 +617,14 @@ function importMd() {
 .app__file {
   display: none;
 }
-.app__editor {
+.app__center {
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+}
+.app__editor {
   padding: 1rem 2rem;
 }
 .app__md {

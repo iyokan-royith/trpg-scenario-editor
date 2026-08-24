@@ -198,6 +198,48 @@ export function validateDraft(
 }
 
 /**
+ * ⭐ 下書きに「打った値」が入っているか（DESIGN-v0.md §1-9-2 の**未保存の印**）。
+ *
+ * ⚠⚠ **`pruneEmpty()` の結果では代用できない。** あちらは `array` と `boolean` を
+ *   **空でも必ず書く**（空配列も入力の結果・`false` も入力された値、という別の契約）ので、
+ *   配列や真偽の欄を持つ定義では**フォームを開いた瞬間から「値がある」**になる。
+ *   → 印が最初から点いていれば、それは「隠れているだけ」を知らせる印として機能しない。
+ *
+ * ⚠ ここは「空の下書き（`createDraft`）と違うか」だけを見る。**保存してよいかは見ない**
+ *   （それは `validateDraft()` の責務）。
+ */
+export function isDraftDirty(fields: FieldDef[], draft: Record<string, unknown>): boolean {
+  return fields.some((field) => {
+    const value = draft[field.key]
+    switch (field.type) {
+      case 'string':
+      case 'text':
+      case 'enum':
+        // ⚠ 空白だけは打っていないのと同じに扱う（`pruneEmpty` の trim と同じ線）。
+        return typeof value === 'string' && value.trim() !== ''
+      case 'integer':
+        // ⚠ 数として正しいかは見ない。`3.5` を打ちかけて本文へ移った人の値も守る対象。
+        return value !== null && value !== undefined && value !== ''
+      case 'boolean':
+        return value === true
+      case 'array':
+        // ⚠ 要素の中身は見ない。1 件足した時点で「打ちかけ」である。
+        return Array.isArray(value) && value.length > 0
+      case 'object':
+        return (
+          typeof value === 'object' &&
+          value !== null &&
+          !Array.isArray(value) &&
+          isDraftDirty(field.fields ?? [], value as Record<string, unknown>)
+        )
+      default:
+        // 入力できない型は下書きにキーが無い（`blankValueOf` を参照）。
+        return false
+    }
+  })
+}
+
+/**
  * ⭐ 下書きから `TemplateInstance.data` を作る。**空の入力は書かない。**
  *
  * ⚠ **ここは検証をしない。** 検証は `validateDraft()` の責務で、呼び手が**先に**通す。
@@ -211,7 +253,10 @@ export function validateDraft(
  * ⚠ `boolean` だけは `false` も書く（`false` は入力された値であって空ではない）。
  * ⚠ 配列要素の `id` は空判定に関わらず必ず残す。
  */
-export function pruneEmpty(fields: FieldDef[], draft: Record<string, unknown>): Record<string, unknown> {
+export function pruneEmpty(
+  fields: FieldDef[],
+  draft: Record<string, unknown>,
+): Record<string, unknown> {
   const data: Record<string, unknown> = {}
   for (const field of fields) {
     const value = draft[field.key]

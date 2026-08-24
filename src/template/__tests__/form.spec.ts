@@ -14,6 +14,7 @@ import {
   SUPPORTED_FIELD_TYPES,
   createArrayItem,
   createDraft,
+  isDraftDirty,
   isSupportedFieldType,
   labelOf,
   newItemId,
@@ -219,5 +220,51 @@ describe('整数でない値は保存の手前で弾く（§1-3-1 決定 4）', 
     expect(errors[0]).toContain('もちもの')
     expect(errors[0]).toContain('2') // 2 件目
     expect(errors[0]).toContain('重さ')
+  })
+})
+
+/**
+ * 未保存の印（DESIGN-v0.md §1-9-2）の述語。
+ *
+ * ⚠⚠ **`pruneEmpty()` で代用できないことを、ここで陽に固定する。**
+ *   あちらは配列と真偽を空でも書くので、開いた直後から「値がある」になる——
+ *   その実装に差し替えても気づけるように、**空の下書きが dirty でない**を最初に置く。
+ */
+describe('未保存の印（§1-9-2）', () => {
+  it('⭐ 空の下書きは打ちかけではない（配列・真偽の欄があっても）', () => {
+    const draft = createDraft(BASIC_FIELDS)
+    expect(isDraftDirty(BASIC_FIELDS, draft)).toBe(false)
+    // ⚠ 判別: pruneEmpty で代用すると、この時点で既にキーが 2 つある（items と secret）
+    expect(Object.keys(pruneEmpty(BASIC_FIELDS, draft)).length).toBeGreaterThan(0)
+  })
+
+  it('文字列を打つと打ちかけになる／空白だけは打っていないのと同じ', () => {
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), title: 'ま' })).toBe(true)
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), title: '  ' })).toBe(false)
+  })
+
+  it('整数は「正しくない値」でも打ちかけとして数える（打った値を守る対象だから）', () => {
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), count: 3.5 })).toBe(true)
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), count: 0 })).toBe(true)
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), count: null })).toBe(false)
+  })
+
+  it('真偽は true だけ／配列は 1 件足した時点で打ちかけ', () => {
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), secret: false })).toBe(false)
+    expect(isDraftDirty(BASIC_FIELDS, { ...createDraft(BASIC_FIELDS), secret: true })).toBe(true)
+    const itemFields = BASIC_FIELDS[6]!.fields!
+    expect(
+      isDraftDirty(BASIC_FIELDS, {
+        ...createDraft(BASIC_FIELDS),
+        items: [createArrayItem(itemFields)],
+      }),
+    ).toBe(true)
+  })
+
+  it('⭐ 入れ子の奥に打った値も見つかる（再帰が 1 段目で切れていない）', () => {
+    const draft = createDraft(BASIC_FIELDS)
+    expect(isDraftDirty(BASIC_FIELDS, draft)).toBe(false)
+    ;(draft.nest as Record<string, unknown>).inner = 'おくのもの'
+    expect(isDraftDirty(BASIC_FIELDS, draft)).toBe(true)
   })
 })
