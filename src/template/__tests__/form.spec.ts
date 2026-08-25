@@ -639,6 +639,24 @@ describe('判別子付き共用体を保存する（pruneEmpty）', () => {
     expect(data.trap).toEqual({ name: '幻の路' })
   })
 
+  it('⭐⭐ 両端とも未入力の通路は `ends` を書かない（`[null, null]` を保存形に入れない・台帳 A76）', () => {
+    const draft = draftOf({
+      target: {
+        kind: 'corridor',
+        ends: [
+          { row: '', col: null },
+          { row: '', col: null },
+        ],
+      },
+    })
+    // ⚠ この下書きは**検証を通る**（片端だけではないので「2 つとも入れてください」が出ない）。
+    //   → `pruneEmpty` まで到達する経路が実在する、というのがこの述語の前提。
+    expect(validateDraft(C_FIELDS, draft)).toEqual([])
+    // ⚠⚠ `ends` が「無い」ことが本体。`[null, null]` は
+    //   「通路はあるが両端が無い」という**図に描けない値**で、P4 の読み手が掴む。
+    expect(pruneEmpty(C_FIELDS, draft).target).toEqual({ kind: 'corridor' })
+  })
+
   it('⭐ フィールドを持たない枝も、判別子だけで保存される（`{name:"幻の路"}`）', () => {
     // ⚠ `object` の「中身が全部空なら丸ごと書かない」を当ててはならない
     //   （当てると、種類を選んだのに何も保存されない）。
@@ -713,6 +731,20 @@ describe('判別子付き共用体の未保存の印（isDraftDirty）', () => {
     // ⚠⚠ ここが false になると、**値が残っているのに印が消える**（下書きが空だと誤解させる）
     expect(isDraftDirty(C_FIELDS, draft)).toBe(true)
     // ⚠ 同じ下書きで、保存には何も出ない（3 つの述語が別々の集合を歩いている証拠）
+    expect(pruneEmpty(C_FIELDS, draft)).toEqual({})
+  })
+
+  it('⭐⭐ **2 番目以降の枝**に打った値も打ちかけとして数える（台帳 A75）', () => {
+    // ⚠⚠ 上のテストが使う `higherEnd` は `TRAP_FIELD.variants[0]` なので、
+    //   **先頭の枝しか見ない誤実装でも同じ答えになる**（＝守り手になっていなかった）。
+    //   ここは `battlefield`＝`ENCOUNTER_FIELD.variants[1]` に打つ。
+    const draft = {
+      ...createDraft(C_FIELDS),
+      encounter: { shape: '', kind: '', battlefield: { enemyFront: 'ゴブリン' } },
+    }
+    // ⚠ `allVariantFieldsOf` が**全部の枝**を歩いていなければ、ここが false になる。
+    expect(isDraftDirty(C_FIELDS, draft)).toBe(true)
+    // ⚠ 保存には出ない（種類が選ばれていないので）＝ここでも 3 つの述語の非対称が効いている
     expect(pruneEmpty(C_FIELDS, draft)).toEqual({})
   })
 })

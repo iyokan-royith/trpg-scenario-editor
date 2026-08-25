@@ -233,6 +233,25 @@ describe('日本語キーの正規化（NFC）', () => {
       })
     }
 
+    /**
+     * ⭐⭐ 素の `fields` のキー重複（台帳 A80）。
+     *
+     * ⚠ 弾かなかった場合の症状は「**後に書いた宣言が勝ち、先の欄が黙って消える**」
+     *   （`createDraft` 等が `fields` を順に走ってキーで上書きするため）。**画面には何も出ない。**
+     * ⚠ 既存の「重複」の述語は 2 本とも `oneOf` の枝側なので、ここが空いていた。
+     */
+    it('⭐⭐ 同じ key を 2 つ宣言したら弾く（後の宣言が先の欄を黙って消す）', () => {
+      const error = readAndFail(
+        defWith([
+          { key: 'note', type: 'string' },
+          { key: 'note', type: 'integer' },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('fields[1].key')
+      expect(error.message).toContain('重複')
+    })
+
     it('enum に choices が無いと、どこが悪いか分かるエラーになる', () => {
       const error = readAndFail(defWith([{ key: 'mood', type: 'enum' }]), 'ためし.json')
       expect(error.message).toContain('fields[0].choices')
@@ -397,6 +416,27 @@ describe('日本語キーの正規化（NFC）', () => {
         'ためし.json',
       )
       expect(clash.message).toContain('name')
+    })
+
+    it('⭐⭐ **2 番目以降の枝**どうしでキーが重なっても弾く（併合キーの検査が全枝を歩く・台帳 A75）', () => {
+      // ⚠⚠ 上のテストは「共有 × variants[0]」なので、**先頭の枝しか見ない誤実装でも弾ける**。
+      //   ここは variants[0] × variants[1] ——全枝を歩いていなければ重複が見えない。
+      const error = readAndFail(
+        defWith([
+          {
+            key: 'trap',
+            type: 'oneOf',
+            discriminator: 'name',
+            variants: [
+              { value: '坂道', fields: [{ key: 'target', type: 'string' }] },
+              { value: '幻の路', fields: [{ key: 'target', type: 'ref' }] },
+            ],
+          },
+        ]),
+        'ためし.json',
+      )
+      expect(error.message).toContain('target')
+      expect(error.message).toContain('重複')
     })
 
     it('枝の値が重複していたら弾く（どちらの枝か決まらない）', () => {
