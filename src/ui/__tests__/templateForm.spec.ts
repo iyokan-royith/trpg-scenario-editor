@@ -171,7 +171,7 @@ describe('配列の足し引きと入れ子（完了条件 #3・#5）', () => {
             ],
           },
         ],
-        outputs: [{ kind: 'perItem', key: 'rooms', source: 'rooms', label: '部屋', form: 'section' }],
+        outputs: [{ kind: 'perItem', key: 'rooms', over: 'rooms', label: '部屋', form: 'section' }],
       }),
       'test.deep',
     )

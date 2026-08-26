@@ -23,7 +23,7 @@ const definition: TemplateDefinition = {
   fields: [],
   outputs: [
     { key: 'まえおき', kind: 'fixed', label: 'まえおき', form: 'section' },
-    { key: 'ひきだし', kind: 'perItem', source: 'ひきだし', label: 'ひきだし', form: 'section' },
+    { key: 'ひきだし', kind: 'perItem', over: 'ひきだし', label: 'ひきだし', form: 'section' },
     { key: 'ずかい', kind: 'fixed', label: 'ずかい', form: 'figure' },
   ],
 }

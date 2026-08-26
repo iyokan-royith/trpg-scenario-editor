@@ -44,7 +44,7 @@ const definition: TemplateDefinition = {
   fields: [],
   outputs: [
     { key: 'まえがき', kind: 'fixed', label: '全体の説明', form: 'section' },
-    { key: '区画', kind: 'perItem', source: '区画', label: '区画', form: 'section' },
+    { key: '区画', kind: 'perItem', over: '区画', label: '区画', form: 'section' },
     { key: 'ぜんたいず', kind: 'fixed', label: '全体図', form: 'figure' },
   ],
 }

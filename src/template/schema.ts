@@ -251,7 +251,7 @@ function checkOutputs(value: unknown, problems: string[], hasLiquidOutputs: bool
     checkString(output.key, `${path}.key`, problems)
     checkString(output.label, `${path}.label`, problems)
     checkString(output.form, `${path}.form`, problems, PART_FORMS)
-    if (output.kind === 'perItem') checkString(output.source, `${path}.source`, problems)
+    if (output.kind === 'perItem') checkString(output.over, `${path}.over`, problems)
   })
 }
 

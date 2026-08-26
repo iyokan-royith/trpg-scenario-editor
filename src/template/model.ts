@@ -212,7 +212,7 @@ export function derivePartsOf(instance: TemplateInstance, def: TemplateDefinitio
       })
       continue
     }
-    const rows = instance.data[output.source]
+    const rows = instance.data[output.over]
     if (!Array.isArray(rows)) continue
     for (const row of rows as ArrayItem[]) {
       parts.push({

@@ -22,8 +22,8 @@ import type { Inline, PartForm, Part, TemplateInstance } from './model'
 export type OutputDef =
   /** インスタンスごとに 1 個 */
   | { kind: 'fixed'; key: string; label: string; form: PartForm }
-  /** `source` の配列の要素数だけ生まれる */
-  | { kind: 'perItem'; key: string; source: string; label: string; form: PartForm }
+  /** `over` の配列の要素数だけ生まれる */
+  | { kind: 'perItem'; key: string; over: string; label: string; form: PartForm }
   /** builtinPatternsに丸ごと任せる（生む数もパターンが決める） */
   | { pattern: string }
 

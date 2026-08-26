@@ -43,7 +43,7 @@ export interface LiquidOutputDef {
   /**
    * 指定するとその配列フィールドの**要素ごとに 1 パート**生む（省略時はインスタンスに 1 個）。
    * ⚠ 値は `instance.data` からのパスではなく**トップレベルのフィールド名**
-   *   （既存の `perItem.source` と同じ粒度）。
+   *   （既存の `perItem.over` と同じ粒度）。
    */
   over?: string
   /** liquid のテンプレート文字列そのもの。⚠ **実行時に評価する**（ビルド時に埋め込まない） */

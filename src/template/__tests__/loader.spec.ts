@@ -86,6 +86,23 @@ describe('壊れた定義には、どこが悪いか分かるエラーが出る�
     expect(error.message).toContain(IMAGE_PATTERN)
   })
 
+  /**
+   * DESIGN-v0.md §1-8-2「⭐ `件数を駆動する配列` → `over`」（台帳 A91）。
+   * `perItem` の旧語 `source` は改名済みなので、**旧語で書かれた定義は
+   * 黙って 0 個のパートを生む代わりに、検証（この読み込みの入口）で問題として拾われる**こと。
+   */
+  it('perItem の旧語 source で書かれた定義は、黙って通らず outputs[0].over が無いと報告する', () => {
+    const text = JSON.stringify({
+      id: 'ため.し',
+      name: 'ためし',
+      version: '0.1.0',
+      fields: [],
+      outputs: [{ kind: 'perItem', key: 'item', source: 'ぞう', label: 'こうもく', form: 'section' }],
+    })
+    const error = readAndFail(text, 'ためし.json')
+    expect(error.message).toContain('outputs[0].over')
+  })
+
   it('問題は最初の 1 件で止めずに全部集める', () => {
     const text = JSON.stringify({ id: '', name: 'ためし', fields: 'はい', outputs: [] })
     const error = readAndFail(text, 'ためし.json')
@@ -171,26 +188,26 @@ describe('日本語キーの正規化（NFC）', () => {
   })
 
   /**
-   * 台帳 A39: `KEY_VALUED_PROPERTIES` は `key` と `source` の 2 つを持つが、
+   * 台帳 A39: `KEY_VALUED_PROPERTIES` は `key` と `over` の 2 つを持つが、
    * `outputs[].key` は上のテストで既に押さえている一方、`kind: 'perItem'` が使う
-   * `outputs[].source` は 1 件も検査されていなかった（`new Set(['key'])` に落としても緑）。
+   * `outputs[].over`（旧 `source`）は 1 件も検査されていなかった（`new Set(['key'])` に落としても緑）。
    */
-  it('NFD で書かれた perItem の source が、NFC のキーで引けるようになる（outputs[].source）', () => {
+  it('NFD で書かれた perItem の over が、NFC のキーで引けるようになる（outputs[].over）', () => {
     const text = JSON.stringify({
       id: 'ため.し',
       name: 'ためし',
       version: '0.1.0',
       fields: [],
       outputs: [
-        { kind: 'perItem', key: 'item', source: `${NFD}ぞう`, label: 'こうもく', form: 'section' },
+        { kind: 'perItem', key: 'item', over: `${NFD}ぞう`, label: 'こうもく', form: 'section' },
       ],
     })
     expect(text).toContain(NFD)
 
     const def = readTemplateDefinition(text, 'ためし.json')
-    expect(def.outputs[0]).toMatchObject({ source: `${NFC}ぞう` })
+    expect(def.outputs[0]).toMatchObject({ over: `${NFC}ぞう` })
 
-    // ⭐ 本題: NFC で書かれたデータ（配列）を、定義の source で引けること
+    // ⭐ 本題: NFC で書かれたデータ（配列）を、定義の over で引けること
     const instance: TemplateInstance = {
       id: 'そざい1',
       templateId: def.id,
