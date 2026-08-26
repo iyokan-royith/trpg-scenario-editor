@@ -1,7 +1,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { PART_REF_INLINE_NODE, PART_REF_NODE } from './partRefExtension'
 import { partKeyOf, type Part } from '../template/model'
-import { headingTitle, headingLevel } from './heading'
+import { headingTitle, headingLevel, MAX_LEVEL } from './heading'
 
 /** 左ペインに出る 1 項目。⚠ これは **導出値** であり、保存しない（DESIGN 1-2）。 */
 export interface OutlineItem {
@@ -14,8 +14,6 @@ export interface OutlineItem {
   pos: number
   children: OutlineItem[]
 }
-
-const MAX_LEVEL = 6
 
 /**
  * ⭐ 「囲っている見出しの 1 つ下」— **深さの導出規則の単一の真実**（DESIGN 1-6-3）。
