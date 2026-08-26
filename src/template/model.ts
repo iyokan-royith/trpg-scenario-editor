@@ -6,6 +6,7 @@
  *   ドキュメントはパートを**所有しない**ので、「配置しても紐付けが切れない」が構造的に保証される。
  */
 import type { OutputDef } from './outputs'
+import type { LiquidOutputDef } from './liquid/outputs'
 import { isPatternOutput } from './outputs'
 import { builtinPatterns } from './render'
 
@@ -104,6 +105,15 @@ export interface TemplateDefinition {
   version: string
   fields: FieldDef[]
   outputs: OutputDef[]
+  /**
+   * ⭐ テンプレ文字列による出力（DESIGN §1-13-1c・移行 P-a）。
+   *
+   * ⚠⚠ **`outputs` と並存する 2 本目の経路であって、置き換えではない。**
+   *   `outputs` が同期（`derivePartsOf`）・こちらが非同期（`deriveLiquidPartsOf`）なので
+   *   union にまとめず**兄弟のフィールド**にしてある。理由と消し方は `liquid/outputs.ts` の冒頭。
+   *   ⚠ **無いことが普通**（同梱テンプレ 2 本はまだ持っていない）。
+   */
+  liquidOutputs?: LiquidOutputDef[]
 }
 
 /** 配列要素は安定した id を持つ（配置の紐付けが要素の並び順に依存しないため）。 */

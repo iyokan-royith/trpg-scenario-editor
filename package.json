@@ -19,6 +19,7 @@
     "@tiptap/pm": "^3.30.2",
     "@tiptap/starter-kit": "^3.30.2",
     "@tiptap/vue-3": "^3.30.2",
+    "liquidjs": "^10.29.0",
     "markdown-it": "^14.3.0",
     "pinia": "^4.0.2",
     "prosemirror-markdown": "^1.13.6",

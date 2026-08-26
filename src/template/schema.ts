@@ -15,6 +15,7 @@ import {
   isVariantFieldType,
 } from './domain'
 import type { OutputDef } from './outputs'
+import type { LiquidOutputDef } from './liquid/outputs'
 import { builtinPatternNames } from './render'
 
 export class TemplateDefinitionError extends Error {
@@ -218,12 +219,20 @@ function checkVariantField(
   }
 }
 
-function checkOutputs(value: unknown, problems: string[]): void {
+/**
+ * @param hasLiquidOutputs `liquidOutputs` に 1 件以上あるか。
+ *   ⚠ **並存期間（§1-13-1c・移行 P-a）のためだけの引数**。liquid 側だけで
+ *   パートを生む定義は `outputs: []` になるので、そこで「空です」と言うと嘘になる。
+ *   古い方を落とすときにこの引数ごと消える。
+ */
+function checkOutputs(value: unknown, problems: string[], hasLiquidOutputs: boolean): void {
   if (!Array.isArray(value)) {
     problems.push(`outputs が配列ではありません（${JSON.stringify(value)}）`)
     return
   }
-  if (value.length === 0) problems.push('outputs が空です（パートを 1 つも生まない定義になります）')
+  if (value.length === 0 && !hasLiquidOutputs) {
+    problems.push('outputs が空です（パートを 1 つも生まない定義になります）')
+  }
   value.forEach((output, i) => {
     const path = `outputs[${i}]`
     if (!isPlainObject(output)) {
@@ -247,6 +256,51 @@ function checkOutputs(value: unknown, problems: string[]): void {
 }
 
 /**
+ * `liquidOutputs` を検める（DESIGN §1-13-1c・移行 P-a）。
+ *
+ * ⚠ **宣言されていなければ何も言わない**（省略可・同梱テンプレ 2 本はまだ持っていない）。
+ * ⚠⚠ `key` は本文に保存される `partId` の素（§1-8-2b）なので、
+ *   **`outputs[].key` との衝突も見る**。衝突すると 2 つの宣言が同じ `partId` を名乗り、
+ *   本文の参照がどちらを指すか決まらない（配置が黙って別のパートに繋がる）。
+ *   ⚠ 組み込みパターン（`{pattern}`）の key は JSON に現れないので突き合わせられない。
+ */
+function checkLiquidOutputs(value: unknown, outputs: unknown, problems: string[]): void {
+  if (value === undefined) return
+  if (!Array.isArray(value)) {
+    problems.push(`liquidOutputs が配列ではありません（${JSON.stringify(value)}）`)
+    return
+  }
+  const takenKeys = new Set(
+    (Array.isArray(outputs) ? outputs : [])
+      .filter((output): output is Record<string, unknown> => isPlainObject(output))
+      .map((output) => output.key)
+      .filter((key): key is string => typeof key === 'string'),
+  )
+  value.forEach((output, i) => {
+    const path = `liquidOutputs[${i}]`
+    if (!isPlainObject(output)) {
+      problems.push(`${path} がオブジェクトではありません（${JSON.stringify(output)}）`)
+      return
+    }
+    checkString(output.kind, `${path}.kind`, problems, ['liquid'])
+    checkString(output.key, `${path}.key`, problems)
+    checkString(output.label, `${path}.label`, problems)
+    checkString(output.form, `${path}.form`, problems, PART_FORMS)
+    checkString(output.template, `${path}.template`, problems)
+    // ⚠ 省略できる。書いたなら空でないこと（空文字だと配列を引けず黙って 0 個になる）。
+    if ('over' in output) checkString(output.over, `${path}.over`, problems)
+    if (typeof output.key === 'string') {
+      if (takenKeys.has(output.key)) {
+        problems.push(
+          `${path}.key「${output.key}」が他の出力と重複しています（key はパートの識別子になります）`,
+        )
+      }
+      takenKeys.add(output.key)
+    }
+  })
+}
+
+/**
  * 素のデータをテンプレ定義として検める。
  * 問題があれば `TemplateDefinitionError` を投げる（問題は全件入っている）。
  */
@@ -261,15 +315,20 @@ export function validateTemplateDefinition(value: unknown, source: string): Temp
   checkString(value.name, 'name', problems)
   checkString(value.version, 'version', problems)
   checkFields(value.fields, problems)
-  checkOutputs(value.outputs, problems)
+  const liquidOutputs = value.liquidOutputs
+  checkOutputs(value.outputs, problems, Array.isArray(liquidOutputs) && liquidOutputs.length > 0)
+  checkLiquidOutputs(liquidOutputs, value.outputs, problems)
 
   if (problems.length > 0) throw new TemplateDefinitionError(source, problems)
 
-  return {
+  const definition: TemplateDefinition = {
     id: value.id as string,
     name: value.name as string,
     version: value.version as string,
     fields: value.fields as FieldDef[],
     outputs: value.outputs as OutputDef[],
   }
+  // ⚠ 宣言されていないときは**キーごと生やさない**（既存の定義と `toEqual` で一致させるため）。
+  if (liquidOutputs !== undefined) definition.liquidOutputs = liquidOutputs as LiquidOutputDef[]
+  return definition
 }

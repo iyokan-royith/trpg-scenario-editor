@@ -15,12 +15,19 @@ import type { TemplateDefinition } from './model'
 
 /**
  * ⚠ 「キーとして使われる**値**」を持つプロパティ名。
- *   `fields[].key` と `outputs[].key` / `outputs[].source` は、
+ *   `fields[].key` と `outputs[].key` / `outputs[].source` / `liquidOutputs[].over` は、
  *   あとでインスタンスのデータを引くときの**キーそのもの**になる。
  *   `label` や `name` は表示名なので**含めない**（正規化しても害は無いが、
  *   「何がキーか」を曖昧にしないために区別しておく）。
+ *
+ * ⚠⚠ **`liquidOutputs[].template` は含めない。** あれは利用者が書いた**値**（本文）であり、
+ *   「値には触らない」という下の規約に従う。⚠ ただしテンプレ文字列の中の `{{ ... }}` は
+ *   NFC へ揃えたキーを参照するので、**中に NFD が混ざると黙って解決に失敗する**。
+ *   識別子は英語という規約（§1-8）があるので当面は踏まないはずだが、線としては開いている。
+ *   要検証[テンプレ文字列の中に NFD のキー参照を書いた実データが出たら、値に触らない規約と
+ *   どちらを取るか決める（現状はテンプレ側が黙って空になる）]
  */
-const KEY_VALUED_PROPERTIES = new Set(['key', 'source'])
+const KEY_VALUED_PROPERTIES = new Set(['key', 'source', 'over'])
 
 /**
  * ⭐ 定義の中のキー文字列を **NFC へ揃える**（DESIGN-v0.md §1-8-4 規約①）。
