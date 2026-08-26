@@ -111,7 +111,9 @@ export interface TemplateDefinition {
    * ⚠⚠ **`outputs` と並存する 2 本目の経路であって、置き換えではない。**
    *   `outputs` が同期（`derivePartsOf`）・こちらが非同期（`deriveLiquidPartsOf`）なので
    *   union にまとめず**兄弟のフィールド**にしてある。理由と消し方は `liquid/outputs.ts` の冒頭。
-   *   ⚠ **無いことが普通**（同梱テンプレ 2 本はまだ持っていない）。
+   *   ⚠ **省略できる**（`image.json` は持たない）。⭐ `dungeon-map.json` は
+   *   **2026-08-26・移行 P-d1 で 1 件持った**（部屋シートのたたき台）——
+   *   同じデータに `outputs` と `liquidOutputs` の 2 本が同時に生きている実例がこれ。
    */
   liquidOutputs?: LiquidOutputDef[]
 }

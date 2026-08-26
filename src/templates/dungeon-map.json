@@ -392,5 +392,15 @@
     {
       "pattern": "builtin:dungeon-map"
     }
+  ],
+  "liquidOutputs": [
+    {
+      "kind": "liquid",
+      "key": "roomSheet",
+      "label": "部屋シート（たたき台）",
+      "form": "section",
+      "over": "rooms",
+      "template": "# {{ at.row }}{{ at.col }}: {{ name }}\n\n（このテンプレートは**たたき台**です。`liquidOutputs[].template` を書き換えてください）\n"
+    }
   ]
 }

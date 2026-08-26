@@ -258,7 +258,7 @@ function checkOutputs(value: unknown, problems: string[], hasLiquidOutputs: bool
 /**
  * `liquidOutputs` を検める（DESIGN §1-13-1c・移行 P-a）。
  *
- * ⚠ **宣言されていなければ何も言わない**（省略可・同梱テンプレ 2 本はまだ持っていない）。
+ * ⚠ **宣言されていなければ何も言わない**（省略可。`image.json` がその状態）。
  * ⚠⚠ `key` は本文に保存される `partId` の素（§1-8-2b）なので、
  *   **`outputs[].key` との衝突も見る**。衝突すると 2 つの宣言が同じ `partId` を名乗り、
  *   本文の参照がどちらを指すか決まらない（配置が黙って別のパートに繋がる）。

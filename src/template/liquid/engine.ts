@@ -21,9 +21,12 @@
  * ⚠ **`memoryLimit` を「総出力サイズの上限」として使わないこと**——実測で効かない
  *   （特定のビルトインフィルタの入力しか見ない。素の `{{ }}` で 150 万字が例外なしで通る）。
  *
- * ⚠⚠ **この経路をまだ UI のイベントに繋がない**（P-b のスコープ外）。
- *   `renderLimit` が入ったので技術的には可能になったが、接続は後のフェーズで決める。
+ * ⭐ **2026-08-26・移行 P-d1 で UI へ繋いだ**（P-b の時点では「まだ繋がない」と書いてあった）。
+ *   繋ぎ先は `store/partStore.ts` で、**どちらのエンジンを使うかはそこが明示的に選ぶ**
+ *   （md 経路なので `markdownLiquidEngine`）。⚠ **既定のエンジンはもう無い**——下の
+ *   `defaultLiquidEngine` は P-b が残していた `要検証` の指示どおりこの commit で消した。
  *   ⚠ `renderLimit` が保証するのは「**終わること**」であって「固まらないこと」ではない（§1-13-1c）。
+ *   実機で固まりが苦痛になったら Web Worker へ逃がす（§1-13-1c の再開条件）。
  *
  * ⚠ 非同期 API（`parseAndRender`）で使う前提。同期 API は再帰 `render` を
  *   スタックオーバーフローで止めてしまい、上限が言語仕様でなく API で決まってしまう。
@@ -85,14 +88,15 @@ export const htmlLiquidEngine: Liquid = createLiquidEngine('html')
 export const markdownLiquidEngine: Liquid = createLiquidEngine('markdown')
 
 /**
- * 既定のエンジン（パース結果のキャッシュを共有するため 1 個を使い回す）。
+ * ⚠⚠ **既定のエンジンは置かない**（2026-08-26・移行 P-d1 で `defaultLiquidEngine` を削除した）。
  *
- * ⚠⚠ **md 側を指しているのは「決定」ではなく「P-a と同じ振る舞いの維持」である。**
- *   P-a の素の `new Liquid()` はエスケープ無し＝md 相当だったので、ここを md にすると
- *   P-b でエスケープの有無が変わらない（＝この commit の差分が設定の追加だけに閉じる）。
- *   **どちらのエンジンで導出するかという振り分けは、UI へ繋ぐフェーズの決定**であり、
- *   そこで `deriveLiquidPartsOf` の呼び出し側が明示的に選ぶべきものである。
- *   `要検証[UI 接続フェーズで「パートごとにどちらのエンジンを使うか」が決まったとき、
- *   この既定を消して呼び出し側に必須で選ばせる形にする]`
+ * P-b は「どちらのエンジンで導出するかは UI へ繋ぐフェーズの決定」として暫定の既定を残し、
+ * `要検証[UI 接続フェーズで…この既定を消して呼び出し側に必須で選ばせる形にする]` を付けていた。
+ * **P-d1 がその UI 接続フェーズである**ので、指示どおり消した。
+ *
+ * ⭐ **消したことに意味がある**——既定があると、呼び出し側が
+ * 「md を選んだ」のか「選ばずに済ませた」のかがコードから読めない。
+ * エスケープの有無は黙って決まってよい種類の設定ではない（`createLiquidEngine` の引数必須と同じ線）。
+ * → `deriveLiquidPartsOf` の `engine` は**必須引数**であり、実際の選択は
+ *   `store/partStore.ts` の `liquidEngine`（既定 `markdownLiquidEngine`）1 箇所に集約されている。
  */
-export const defaultLiquidEngine: Liquid = markdownLiquidEngine

@@ -1,5 +1,6 @@
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
+import type { Liquid } from 'liquidjs'
 import {
   derivePartsOf,
   imageFieldKeyOf,
@@ -8,8 +9,50 @@ import {
   type TemplateDefinition,
   type TemplateInstance,
 } from '../template/model'
+import { deriveLiquidPartsOf, liquidPartToPart } from '../template/liquid/outputs'
+import { markdownLiquidEngine } from '../template/liquid/engine'
 import { readBundledTemplates } from '../template/loader'
 import { IMAGE_KEY, CAPTION_KEY, IMAGE_TEMPLATE_ID } from '../template/render/image'
+
+/**
+ * liquid の描画がいまどうなっているか（DESIGN-v0.md §1-13-1f 決定1・移行 P-d1）。
+ *
+ * ⚠ **`'ready'` は「エラーが 1 件も無い」であって「liquid の出力がある」ではない**
+ *   （`liquidOutputs` を 1 つも持たない構成でも `'ready'` になる）。
+ */
+export type LiquidRenderStatus = 'ready' | 'rendering' | 'error'
+
+/**
+ * 描画に失敗した素材 1 件。
+ *
+ * ⚠⚠ **`message` は liquidjs の文面そのまま**である。ラップも日本語化もしない
+ *   （§1-13-1c のロイス決定「エラーは教えてあげましょう。特に日本語化とかする必要はないです」）。
+ *   `LiquidError` の `message` は末尾に `, line:N, col:M` を含み、`context` に
+ *   `^` 付きの該当行が入っている——**両方そのまま利用者へ渡す**のがこの型の役目。
+ *
+ * ⚠ `context` が `undefined` になるのは `parseLimit` 超過（生の `AssertionError`）だけだが、
+ *   本番のエンジンは `parseLimit` を設定していないので通常は来ない。
+ *   **それでも省略可にしてある**——`e.context` を一律に読む UI がその 1 ケースで壊れる、と
+ *   §1-13-1c が名指ししているため。
+ */
+export interface LiquidRenderFailure {
+  instanceId: string
+  templateId: string
+  /** liquidjs の `message`（英語のまま） */
+  message: string
+  /** liquidjs の `context`（該当行と `^` の抜粋）。持たない例外もある */
+  context?: string
+}
+
+function failureOf(instance: TemplateInstance, error: unknown): LiquidRenderFailure {
+  const context = (error as { context?: unknown }).context
+  return {
+    instanceId: instance.id,
+    templateId: instance.templateId,
+    message: error instanceof Error ? error.message : String(error),
+    ...(typeof context === 'string' ? { context } : {}),
+  }
+}
 
 /**
  * ⚠ 実体は `template/render/image.ts` へ移した（同梱 JSON と対になるキー名を持つのと同じ場所）。
@@ -34,16 +77,120 @@ export const usePartStore = defineStore('parts', () => {
   const definitions = ref<Record<string, TemplateDefinition>>({})
   const instances = ref<Record<string, TemplateInstance>>({})
 
-  /** 生きているパート全部。データを変えるとここが作り直され、NodeView が追従する。 */
+  /**
+   * ⭐⭐ liquid の描画に使うエンジン（DESIGN-v0.md §1-13-1c・移行 P-d1）。
+   *
+   * ⚠⚠ **ここが「どちらのエンジンを使うか」を選んでいる唯一の場所**である。
+   *   `engine.ts` から既定（`defaultLiquidEngine`）を消したので、選ばずに済ませる道は無い。
+   *   md 側なのは **P-d1 が繋いだのが md 経路だから**（HTML 経路＝iframe sandbox は P4-a）。
+   *
+   * ⚠ 差し替えられるようにしてあるのは、テストが**描画の途中の状態**を作れるようにするため
+   *   （解決を握った偽エンジンを挿す）。⚠ 差し替えても再描画は起きないので、
+   *   **インスタンスを登録する前に差し替えること**。
+   */
+  const liquidEngine = shallowRef<Liquid>(markdownLiquidEngine)
+
+  /**
+   * ⭐ 直前に成功した liquid のパート（素材ごと）。
+   *
+   * ⚠⚠ **描画中でも、エラー中でも、ここは空にしない**（§1-13-1f 決定1）。
+   *   ロイスが同日に止めた「**あ！消えちゃった！**」を作らないのがこの決定の主旨で、
+   *   状態は本文を消すことではなく**ステータスバー**で知らせる。
+   *   → だから「描画を始めたら一旦クリア」は**やってはいけない**（バグではなく決定違反になる）。
+   *
+   * ⚠ `shallowRef` ＋ 丸ごと差し替えにしてあるのは、Map の中身を変えるより
+   *   「いつ入れ替わったか」が読める形にするため。
+   */
+  const liquidPartsByInstance = shallowRef<ReadonlyMap<string, Part[]>>(new Map())
+
+  /** ⚠ 「liquid の出力があるか」ではなく「エラーが出ていないか」を表す（型の注記を参照）。 */
+  const liquidStatus = ref<LiquidRenderStatus>('ready')
+
+  /** ⚠ 握りつぶさない（§1-13-1c）。ここが空なら本当にエラーが無かったということ。 */
+  const liquidFailures = ref<LiquidRenderFailure[]>([])
+
+  /**
+   * 走っている描画の世代。
+   * ⚠ **古い描画の結果（成功も失敗も）で新しい結果を上書きしない**ための番号。
+   *   データを速く連続で変えると描画は重なりうる（`renderLimit` は 10 秒ある）。
+   */
+  let renderGeneration = 0
+
+  /** liquid のパートを平らに並べたもの（ステータスバーの件数表示と、下の `parts` が使う）。 */
+  const liquidParts = computed<Part[]>(() => {
+    const out: Part[] = []
+    for (const instance of Object.values(instances.value)) {
+      const found = liquidPartsByInstance.value.get(instance.id)
+      if (found) out.push(...found)
+    }
+    return out
+  })
+
+  /**
+   * 生きているパート全部。データを変えるとここが作り直され、NodeView が追従する。
+   *
+   * ⭐⭐ **同期経路（`derivePartsOf`）と非同期経路（liquid）がここで合流する**（移行 P-d1）。
+   *   ⚠ **同期の側は liquid の完了を待たない**——待たせると、テンプレを 1 行直すたびに
+   *   既存のパートまで消えることになる。liquid は**遅れて後から入ってくる**。
+   *
+   * ⚠ 並びは「素材ごとに 同期 → liquid」。素材一覧（`MaterialPane`）は
+   *   **素材あたり 1 行にしか出さない操作**を「いま見えている中の 1 行目」で決めるので、
+   *   同じ素材のパートが離れて並ぶと同じ素材に 2 回「消す」が出る。
+   */
   const parts = computed<Part[]>(() => {
     const out: Part[] = []
     for (const instance of Object.values(instances.value)) {
       const def = definitions.value[instance.templateId]
       if (!def) continue
       out.push(...derivePartsOf(instance, def))
+      const rendered = liquidPartsByInstance.value.get(instance.id)
+      if (rendered) out.push(...rendered)
     }
     return out
   })
+
+  /**
+   * liquid のパートを描き直す。
+   *
+   * ⚠ **素材ごとに try/catch する**。`deriveLiquidPartsOf` は 1 件目のエラーで throw するので、
+   *   まとめて回すと**壊れた素材 1 つで全素材の liquid パートが消える**。
+   *
+   * ⚠ エラーになった素材は**直前に成功した結果を持ち越す**（§1-13-1f 決定1）。
+   *   持ち越さないと、テンプレを編集している最中の 1 文字ごとに本文が消える。
+   */
+  async function renderLiquidParts(): Promise<void> {
+    renderGeneration += 1
+    const generation = renderGeneration
+    liquidStatus.value = 'rendering'
+
+    const previous = liquidPartsByInstance.value
+    const next = new Map<string, Part[]>()
+    const failures: LiquidRenderFailure[] = []
+
+    for (const instance of Object.values(instances.value)) {
+      const def = definitions.value[instance.templateId]
+      if (!def?.liquidOutputs?.length) continue
+      try {
+        const rendered = await deriveLiquidPartsOf(instance, def, liquidEngine.value)
+        next.set(instance.id, rendered.map(liquidPartToPart))
+      } catch (error) {
+        failures.push(failureOf(instance, error))
+        const kept = previous.get(instance.id)
+        if (kept) next.set(instance.id, kept)
+      }
+    }
+
+    // ⚠ 追い越された描画の結果は捨てる（成功も失敗も）。ここを外すと、
+    //   古い描画が後から着地して新しいデータの結果を巻き戻す。
+    if (generation !== renderGeneration) return
+    liquidPartsByInstance.value = next
+    liquidFailures.value = failures
+    liquidStatus.value = failures.length > 0 ? 'error' : 'ready'
+  }
+
+  // ⚠ 定義（テンプレ文字列）とインスタンス（データ）のどちらが変わっても描き直す。
+  //   ⚠⚠ `deep` が要る——`instances.value[id].data` の中身だけが変わる経路がある。
+  watch([instances, definitions], () => void renderLiquidParts(), { deep: true, immediate: true })
 
   const partIndex = computed<Map<string, Part>>(
     () => new Map(parts.value.map((p) => [partKeyOf(p.instanceId, p.partId), p])),
@@ -173,6 +320,11 @@ export const usePartStore = defineStore('parts', () => {
     definitions,
     instances,
     parts,
+    liquidParts,
+    liquidEngine,
+    liquidStatus,
+    liquidFailures,
+    renderLiquidParts,
     partIndex,
     findPart,
     partsOfInstance,

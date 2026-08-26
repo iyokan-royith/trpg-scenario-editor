@@ -21,8 +21,7 @@
  *   "配置の単位を N 個生む"宣言でもある。配置の単位はデータ構造側の話なので残るはず」）
  *   に従ったもので、スパイクの `each: key`（1 テンプレ → 部屋の数だけ出力）と同じ構図。
  */
-import type { ArrayItem, PartForm, TemplateDefinition, TemplateInstance } from '../model'
-import { defaultLiquidEngine } from './engine'
+import type { ArrayItem, Part, PartForm, TemplateDefinition, TemplateInstance } from '../model'
 import type { Liquid } from 'liquidjs'
 
 /**
@@ -58,6 +57,8 @@ export interface LiquidOutputDef {
  *   ここで `[{kind:'text', text: html}]` に詰めると「テキストとして扱う」という嘘が入り、
  *   既存の `Inline` の意味（画面にそのまま出る文字）と衝突する。
  *   → **別の型として持ち、UI への接続は後のフェーズで決める。**
+ *
+ * **✅ その「後のフェーズ」が来た**（2026-08-26・移行 P-d1）→ `liquidPartToPart` を見ること。
  */
 export interface LiquidPart {
   instanceId: string
@@ -78,12 +79,14 @@ export interface LiquidPart {
  * ⚠ `over` が配列でないときは**黙って 0 個**にする。これは新しい寛容さではなく、
  *   既存の `repeat` / `perItem` と同じ振る舞いに揃えただけ（`model.ts` / `outputs.ts`）。
  *
- * @param engine 差し替え可能にしてあるのはテストのため。通常は既定を使う。
+ * @param engine ⚠⚠ **必須**（2026-08-26・移行 P-d1 で既定を外した）。
+ *   md か HTML かで `outputEscape` の有無が変わるので、**選ばずに済ませられてはいけない**。
+ *   選択の実体は `store/partStore.ts` の `liquidEngine` にある。
  */
 export async function deriveLiquidPartsOf(
   instance: TemplateInstance,
   def: TemplateDefinition,
-  engine: Liquid = defaultLiquidEngine,
+  engine: Liquid,
 ): Promise<LiquidPart[]> {
   const parts: LiquidPart[] = []
   for (const output of def.liquidOutputs ?? []) {
@@ -112,4 +115,38 @@ export async function deriveLiquidPartsOf(
     }
   }
   return parts
+}
+
+/**
+ * ⭐⭐ liquid の出力 1 件を、既存の `Part` へ畳む（**md 経路だけ**・移行 P-d1）。
+ *
+ * ⚠⚠ **上の `LiquidPart` の警告「`Part.body: Inline[]` に畳まない」を、ここで
+ *   条件付きで解除している。** 何が変わったのかを書き残す（黙って反対のことをしない）:
+ *
+ *   - あの警告が守っていたのは「**HTML 文字列をテキストとして扱う嘘**」である。
+ *     `{kind:'text'}` は「画面にそのまま出る文字」という意味なので、
+ *     `<b>x</b>` を入れると意味が食い違う。
+ *   - **P-d1 が繋ぐのは md 経路**（`markdownLiquidEngine`）で、そこで返るのは
+ *     **本当に「画面にそのまま出る文字」**である。だから嘘にならない。
+ *   - **HTML 経路（P4-a・iframe sandbox）はここを通さない。**
+ *     あちらは `{ 種別: 'HTML' }` として `Inline` の union に合流する予定
+ *     （`model.ts` の `Inline` のコメントが既にそう書いている）。
+ *
+ * ⚠ したがって**この関数を HTML エンジンの出力に使わないこと**。
+ *   使うと `<b>` が画面にそのまま出る（＝エスケープされた見た目になる）か、
+ *   将来 `v-html` に繋いだ瞬間に §1-4 の iframe 契約を迂回する。
+ *   `要検証[P4-a（HTML 経路）を入れるとき、この関数の呼び出し元が md 側だけであることを確かめる。
+ *   HTML 側から呼ばれていたら union の枝を足して分岐させる]`
+ *
+ * ⚠ **`Part.body` の型は変えていない**（畳み込み B はまだ来ていない）。
+ *   ここは「変換」であって「型の移行」ではない。
+ */
+export function liquidPartToPart(part: LiquidPart): Part {
+  return {
+    instanceId: part.instanceId,
+    partId: part.partId,
+    form: part.form,
+    title: part.title,
+    body: [{ kind: 'text', text: part.rendered }],
+  }
 }

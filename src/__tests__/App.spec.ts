@@ -15,7 +15,14 @@ import { nextTick } from 'vue'
 import type { Editor } from '@tiptap/vue-3'
 import App from '../App.vue'
 import { headingTitle, headingMark } from '../document/heading'
-import { clearDocument, loadDocument, saveDocument } from '../store/persistence'
+import {
+  clearDocument,
+  clearInstances,
+  loadDocument,
+  saveDocument,
+  saveInstance,
+} from '../store/persistence'
+import { readMayoiParkSample } from '../samples'
 
 async function mountApp() {
   // ⚠ 本物の document に挿さないと `view.hasFocus()` が真にならず、
@@ -502,5 +509,38 @@ describe('旧版形式の doc を開いても、見出しが失われない', ()
       if (JSON.stringify(stored?.doc ?? '').includes('# まえがき')) return
     }
     throw new Error('保存された内容から見出しが失われています')
+  })
+})
+
+/**
+ * ⭐⭐ liquid の描画が画面まで届いているか（DESIGN-v0.md §1-13-1f 決定1・移行 P-d1）。
+ *
+ * ⚠ ストア単体のテスト（`store/__tests__/liquidPartsInStore.spec.ts`）とは別物である。
+ *   あちらは「合流の機構」を見る。**ここは App がステータスバーと素材一覧へ
+ *   実際に繋いでいるか**を見る——結線が抜けていても、ストアのテストは全部緑のままになる。
+ */
+describe('liquid の描画がステータスバーと素材一覧に出る（P-d1）', () => {
+  beforeEach(async () => {
+    await clearInstances()
+  })
+
+  it('同梱テンプレのたたき台が描かれ、件数がステータスバーに出る', async () => {
+    await saveInstance(readMayoiParkSample())
+    const wrapper = await mountApp()
+    await flushPromises()
+    await nextTick()
+
+    const status = wrapper.find('.status')
+    expect(status.exists()).toBe(true)
+    // ⚠ 9 室ぶんの liquid パートが合流し、同期の 11 件と足して 20 件。
+    expect(status.text()).toContain('パート 20 件（うち liquid 9 件）')
+    expect(status.text()).toContain('描画済み')
+    expect(status.attributes('data-status')).toBe('ready')
+
+    // ⚠ 素材一覧にも出る（＝本文へ挿せる状態にある）。
+    expect(wrapper.findComponent({ name: 'MaterialPane' }).text()).toContain(
+      '部屋シート（たたき台）',
+    )
+    wrapper.unmount()
   })
 })

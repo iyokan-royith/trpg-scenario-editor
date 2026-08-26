@@ -19,6 +19,7 @@ import MaterialPane from './ui/MaterialPane.vue'
 import TemplatePane from './ui/TemplatePane.vue'
 import TemplateForm from './ui/TemplateForm.vue'
 import CenterTabs from './ui/CenterTabs.vue'
+import StatusBar from './ui/StatusBar.vue'
 import type { CenterTab } from './ui/centerTabs'
 import { usePartStore } from './store/partStore'
 import {
@@ -110,7 +111,9 @@ const initialDraft = ref<Record<string, unknown> | null>(null)
  *   → `:key` に使って**開き直すたびに作り直す**。
  */
 const formKey = computed(() =>
-  editingInstanceId.value ? `edit:${editingInstanceId.value}` : `new:${selectedTemplate.value?.id ?? ''}`,
+  editingInstanceId.value
+    ? `edit:${editingInstanceId.value}`
+    : `new:${selectedTemplate.value?.id ?? ''}`,
 )
 const activeTabId = ref<string>(BODY_TAB_ID)
 
@@ -760,6 +763,15 @@ async function importMd() {
       aria-label="画像を選ぶ"
       @change="onFileChosen"
     />
+    <!-- ⚠ 画面の下端（§1-13-1f 決定1）。liquid の描画は非同期なので「いま古い内容を見ている」
+         瞬間が必ずある。本文は消さず、状態だけここに出す。 -->
+    <StatusBar
+      class="app__status"
+      :status="store.liquidStatus"
+      :failures="store.liquidFailures"
+      :partCount="store.parts.length"
+      :liquidPartCount="store.liquidParts.length"
+    />
     <section v-if="mdOpen" class="app__md">
       <label for="md">md（書き出した内容。直してから読み込めます）</label>
       <textarea id="md" v-model="md" rows="10"></textarea>
@@ -838,6 +850,10 @@ async function importMd() {
 }
 .app__editor {
   padding: 1rem 2rem;
+}
+.app__status {
+  /* ⚠ 本文の面積を奪わない（「そんなに目立たなくてもいい」） */
+  flex: 0 0 auto;
 }
 .app__md {
   border-top: 1px solid #ddd;

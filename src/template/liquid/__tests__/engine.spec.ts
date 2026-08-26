@@ -24,12 +24,12 @@ import {
 } from 'liquidjs'
 import {
   createLiquidEngine,
-  defaultLiquidEngine,
+  markdownLiquidEngine,
   htmlLiquidEngine,
   liquidOptionsFor,
-  markdownLiquidEngine,
   LIQUID_RENDER_LIMIT_MS,
 } from '../engine'
+import * as engineModule from '../engine'
 
 /** 両方のエンジンに同じ検査を当てるための組。用途で分かれるのは `outputEscape` だけのはず。 */
 const ENGINES = [
@@ -48,10 +48,12 @@ describe('strictVariables — 未定義変数は黙って空文字にならな�
   )
 
   it('文面は「どの変数か」と行・列を含む（そのまま利用者に見せられる・翻訳しない）', async () => {
-    const error = await defaultLiquidEngine.parseAndRender('|{{ rooms.zz9 }}|', { rooms: {} }).then(
-      () => null,
-      (e: unknown) => e as LiquidError,
-    )
+    const error = await markdownLiquidEngine
+      .parseAndRender('|{{ rooms.zz9 }}|', { rooms: {} })
+      .then(
+        () => null,
+        (e: unknown) => e as LiquidError,
+      )
     expect(error).toBeInstanceOf(UndefinedVariableError)
     expect(error!.message).toContain('undefined variable: rooms.zz9')
     expect(error!.message).toContain('line:1')
@@ -62,7 +64,7 @@ describe('strictVariables — 未定義変数は黙って空文字にならな�
 
   it('⚠ 反証: 定義されている変数なら同じテンプレが通る（例外が「常に飛ぶ」わけではない）', async () => {
     expect(
-      await defaultLiquidEngine.parseAndRender('部屋: {{ roomName }}', { roomName: 'A-1' }),
+      await markdownLiquidEngine.parseAndRender('部屋: {{ roomName }}', { roomName: 'A-1' }),
     ).toBe('部屋: A-1')
   })
 })
@@ -79,12 +81,12 @@ describe('strictFilters — 存在しないフィルタは黙って無視され�
 
   it('文面は「どのフィルタか」を含む', async () => {
     await expect(
-      defaultLiquidEngine.parseAndRender('{{ name | nosuchfilter }}', { name: 'ねこ' }),
+      markdownLiquidEngine.parseAndRender('{{ name | nosuchfilter }}', { name: 'ねこ' }),
     ).rejects.toThrow(/undefined filter: nosuchfilter/)
   })
 
   it('⚠ 反証: 実在するフィルタなら通る（フィルタが全部禁止されたわけではない）', async () => {
-    expect(await defaultLiquidEngine.parseAndRender('{{ name | upcase }}', { name: 'abc' })).toBe(
+    expect(await markdownLiquidEngine.parseAndRender('{{ name | upcase }}', { name: 'abc' })).toBe(
       'ABC',
     )
   })
@@ -163,8 +165,18 @@ describe('outputEscape — HTML 用と md 用でエンジンを分ける（§1-1
     expect(createLiquidEngine('markdown').options.outputEscape).toBeUndefined()
   })
 
-  it('既定のエンジンは md 側（P-a の素の `new Liquid()` と同じ振る舞い＝この commit で変わらない）', () => {
-    expect(defaultLiquidEngine).toBe(markdownLiquidEngine)
+  /**
+   * ⚠ P-b はここで「既定のエンジンは md 側」を固定していた（`defaultLiquidEngine === markdownLiquidEngine`）。
+   *   あれは **UI 接続フェーズまでの暫定**で、同じコメントに
+   *   `要検証[…この既定を消して呼び出し側に必須で選ばせる形にする]` が付いていた。
+   *   **P-d1 がその接続フェーズ**なので、述語を「既定が無いこと」へ差し替える。
+   */
+  it('⭐ 既定のエンジンはもう無い（呼び出し側が必ず選ぶ・P-d1 で `defaultLiquidEngine` を削除）', () => {
+    expect(Object.keys(engineModule)).not.toContain('defaultLiquidEngine')
+    // ⚠ 反証: 消えたのは既定だけで、実体 2 本は残っている（丸ごと消したのではない）
+    expect(Object.keys(engineModule)).toEqual(
+      expect.arrayContaining(['markdownLiquidEngine', 'htmlLiquidEngine']),
+    )
   })
 })
 
@@ -196,7 +208,7 @@ describe('⚠ parseLimit だけ例外の形が違う（研究 2026-08-26 の 6b�
   })
 
   it('⚠ 反証: 他の壊し方は LiquidError 系で `context` を持つ（違いが parseLimit 固有だと言える）', async () => {
-    const error = await defaultLiquidEngine.parseAndRender('{% for x in y %}').then(
+    const error = await markdownLiquidEngine.parseAndRender('{% for x in y %}').then(
       () => null,
       (e: unknown) => e as LiquidError,
     )

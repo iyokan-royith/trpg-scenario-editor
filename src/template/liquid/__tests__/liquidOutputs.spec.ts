@@ -34,6 +34,12 @@ function defOf(liquidOutputs: LiquidOutputDef[], outputs: TemplateDefinition['ou
   } satisfies TemplateDefinition
 }
 
+/**
+ * ⚠ **エンジンは必須引数**（移行 P-d1 で既定を消した）。
+ *   md 側なのは、このファイルの期待値が「エスケープされていない素の md」だから。
+ */
+const md = createLiquidEngine('markdown')
+
 describe('テンプレ文字列から出力が作れる（P-a の合格条件）', () => {
   it('インスタンスのデータを埋めた文字列が返る', async () => {
     const def = defOf([
@@ -48,6 +54,7 @@ describe('テンプレ文字列から出力が作れる（P-a の合格条件）
     const parts = await deriveLiquidPartsOf(
       instanceOf({ name: 'マヨイパーク', level: 1, playerCount: 4 }),
       def,
+      md,
     )
     expect(parts).toEqual([
       {
@@ -95,6 +102,7 @@ describe('テンプレ文字列から出力が作れる（P-a の合格条件）
         },
       }),
       def,
+      md,
     )
     expect(withEncounter[0]!.rendered).toBe(
       'ジャングルエリア\n遭遇: 友好\n- 敵前衛: 【スライム】*1\n- 敵本陣: 【みみず】*2',
@@ -103,6 +111,7 @@ describe('テンプレ文字列から出力が作れる（P-a の合格条件）
     const withoutEncounter = await deriveLiquidPartsOf(
       instanceOf({ name: 'かいようエリア', encounter: null }),
       def,
+      md,
     )
     expect(withoutEncounter[0]!.rendered).toBe('かいようエリア\n遭遇なし')
   })
@@ -135,6 +144,7 @@ describe('テンプレ文字列から出力が作れる（P-a の合格条件）
         ],
       }),
       def,
+      md,
     )
     expect(parts[0]!.rendered).toBe(
       '| 名前 | 対象 |\n|---|---|\n| 自動販売機 | 部屋 |\n| シークレットドア | C1への通路 |',
@@ -161,6 +171,7 @@ describe('テンプレ文字列から出力が作れる（P-a の合格条件）
     const parts = await deriveLiquidPartsOf(
       instanceOf({ roomTraps: [{ id: 'r1', name: '温泉' }] }),
       def,
+      md,
     )
     // タグ行が空行として残り、区切り行とデータ行の間が切れている＝表として成立しない
     expect(parts[0]!.rendered).toContain('|---|---|\n\n')
@@ -188,6 +199,7 @@ describe('パートを何個生むかは、テンプレ文字列の外（`over`�
         ],
       }),
       def,
+      md,
     )
     expect(parts.map((p) => p.partId)).toEqual(['rooms:a1', 'rooms:a2'])
     expect(parts.map((p) => p.rendered)).toEqual(['A-1 ゆきやまエリア', 'A-2 ジャングルエリア'])
@@ -196,8 +208,8 @@ describe('パートを何個生むかは、テンプレ文字列の外（`over`�
   })
 
   it('`over` が配列でなければ 0 個（既存の repeat / perItem と同じ振る舞い）', async () => {
-    expect(await deriveLiquidPartsOf(instanceOf({}), def)).toEqual([])
-    expect(await deriveLiquidPartsOf(instanceOf({ rooms: 'ちがう' }), def)).toEqual([])
+    expect(await deriveLiquidPartsOf(instanceOf({}), def, md)).toEqual([])
+    expect(await deriveLiquidPartsOf(instanceOf({ rooms: 'ちがう' }), def, md)).toEqual([])
   })
 })
 
@@ -230,14 +242,14 @@ describe('⭐ 並存 — 同じ定義に両方書いても、既存の経路は 
   })
 
   it('新経路（非同期・文字列）は旧経路と独立に動く', async () => {
-    const parts = await deriveLiquidPartsOf(instance, def)
+    const parts = await deriveLiquidPartsOf(instance, def, md)
     expect(parts.map((p) => p.partId)).toEqual(['modern'])
     expect(parts[0]!.rendered).toBe('新: ほんぶん')
   })
 
-  it('liquidOutputs を持たない定義では 0 個（同梱テンプレ 2 本がこの状態）', async () => {
+  it('liquidOutputs を持たない定義では 0 個（`image.json` がこの状態）', async () => {
     const bare: TemplateDefinition = { ...def, liquidOutputs: undefined }
-    expect(await deriveLiquidPartsOf(instance, bare)).toEqual([])
+    expect(await deriveLiquidPartsOf(instance, bare, md)).toEqual([])
   })
 })
 
@@ -261,6 +273,7 @@ describe('エンジン', () => {
         defOf([
           { kind: 'liquid', key: 'k', label: 'l', form: 'inline', template: '{% for x in y %}' },
         ]),
+        md,
       ),
     ).rejects.toThrow(/tag .* not closed|not closed/i)
   })
