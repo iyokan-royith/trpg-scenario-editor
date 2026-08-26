@@ -652,7 +652,19 @@ async function exportMd() {
   const doc = editor.value?.state.doc
   if (!doc) return
   await showBodyTab()
-  md.value = docToMd(doc)
+  // ⚠⚠ **`parts` を渡すのが契約**（§1-13-1h）。渡さないとパート参照が
+  //   `<!-- partRef ... -->` のコメントのまま出る（＝中身が 1 文字も書き出されない）。
+  try {
+    md.value = docToMd(doc, { parts: store.parts })
+  } catch (error) {
+    // ⚠ 深さ 6 超過（`HeadingLevelOverflowError`・§1-13-1d 決定2）はここへ来る。
+    //   ⚠ catch が無いと「ボタンを押しても何も起きない」になる——**鳴らすと決めた例外を
+    //   握りつぶす場所を作らない**。文面はそのまま見せる（§1-13-1c）。
+    notice.value = `md を書き出せませんでした: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+    return
+  }
   mdOpen.value = true
 }
 

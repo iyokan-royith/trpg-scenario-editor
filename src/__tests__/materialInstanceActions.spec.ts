@@ -103,7 +103,10 @@ async function waitForSaved(check: (list: Awaited<ReturnType<typeof loadInstance
 /** その素材の「素材単位の操作」が出ている行（＝いま見えている中の 1 行目・§1-3-2 R2）。 */
 function rowIndexOfInstanceHead(nth: number): number {
   const heads = rows()
-    .map((row, index) => ({ index, hasEdit: row.findAll('button').some((b) => b.text() === '編集') }))
+    .map((row, index) => ({
+      index,
+      hasEdit: row.findAll('button').some((b) => b.text() === '編集'),
+    }))
     .filter((r) => r.hasEdit)
   return heads[nth]!.index
 }
@@ -114,7 +117,16 @@ function buttonIn(index: number, startsWith: string) {
     .find((b) => b.text().startsWith(startsWith))
 }
 
-/** 迷宮マップを 1 件作る（部屋 2 件 → 1＋2＋1 = 4 パート）。 */
+/**
+ * 迷宮マップを 1 件作る。
+ *
+ * ⚠ **パートは 6 件**（同期の `outputs` が 1＋2＋1 = 4 ／`liquidOutputs` の `roomSheet` が部屋ごとに 1 で 2）。
+ *   ⭐ **2026-08-26 の §1-13-1g までは 4 件だった**——`roomSheet` のたたき台が
+ *   `{{ at.row }}` を裸で参照しており、**新しく足した空の部屋では必ず例外**になって
+ *   liquid のパートが 0 件だったため（監査 A108）。
+ *   たたき台を `{% if %}` で守る形に直した結果、**空の部屋でも描けるようになって 2 件増えた。**
+ *   → **ここの 4 → 6 は性質の変化ではなく、壊れていた側が直った結果である。**
+ */
 async function createDungeonWithTwoRooms(name: string) {
   const app = wrapper!
   // ⚠⚠ **状態（1 件以上ある）ではなく遷移（1 件増えた）で待つ。**
@@ -160,16 +172,18 @@ describe('複数パートの素材で「消す」が嘘をつかない（S7-2）
   it('⭐ 「消す」は行ごとではなく**素材に 1 つ**出て、消える件数を押す前に言う', async () => {
     await mountApp()
     await createDungeonWithTwoRooms('ためしの迷宮')
-    expect(rows()).toHaveLength(4)
+    expect(rows()).toHaveLength(6)
 
     // 先頭の行だけがインスタンス単位の操作を持つ。⚠ 4 つ並ぶと「押した 1 件が消える」に見える
-    const withRemove = [0, 1, 2, 3].filter((i) => buttonTextsOf(i).some((t) => t.includes('消す')))
+    const withRemove = [0, 1, 2, 3, 4, 5].filter((i) =>
+      buttonTextsOf(i).some((t) => t.includes('消す')),
+    )
     expect(withRemove).toEqual([0])
-    // 押す前に「4 件まとめて消える」と分かる（消した後では手遅れ）
-    expect(buttonIn(0, '素材ごと消す')!.text()).toContain('4 件')
+    // 押す前に「6 件まとめて消える」と分かる（消した後では手遅れ）
+    expect(buttonIn(0, '素材ごと消す')!.text()).toContain('6 件')
   })
 
-  it('⭐ 消したら、消えた実態（パート 4 件）と本文に残った参照の総数を知らせる', async () => {
+  it('⭐ 消したら、消えた実態（パート 6 件）と本文に残った参照の総数を知らせる', async () => {
     await mountApp()
     await createDungeonWithTwoRooms('ためしの迷宮')
     const store = usePartStore()
@@ -188,7 +202,7 @@ describe('複数パートの素材で「消す」が嘘をつかない（S7-2）
     const notice = wrapper!.find('.app__notice').text()
     expect(notice).toContain('ためしの迷宮')
     // ⚠ 押した 1 件の名前しか言わないのが元の欠陥。消えた件数を言う
-    expect(notice).toContain('4 件')
+    expect(notice).toContain('6 件')
     // ⚠ 数え漏らしも元の欠陥（押した行のパートしか数えていなかった）
     expect(notice).toContain('2 箇所')
   })
@@ -207,12 +221,14 @@ describe('複数パートの素材で「消す」が嘘をつかない（S7-2）
     await insertFromRow(0)
     await wrapper!.find('.materials__filter input').setValue(true)
 
-    expect(rows()).toHaveLength(3)
+    expect(rows()).toHaveLength(5)
     expect(buttonTextsOf(0).some((t) => t.includes('消す'))).toBe(true)
-    // ⚠ 消えるのは**見えていない先頭も含めた全部**なので、件数は 3 ではなく 4
-    expect(buttonIn(0, '素材ごと消す')!.text()).toContain('4 件')
+    // ⚠ 消えるのは**見えていない先頭も含めた全部**なので、件数は 5 ではなく 6
+    expect(buttonIn(0, '素材ごと消す')!.text()).toContain('6 件')
     // ⚠ 増殖もしていない（見えている行すべてに付いたら元の欠陥に戻る）
-    expect([0, 1, 2].filter((i) => buttonTextsOf(i).some((t) => t.includes('消す')))).toEqual([0])
+    expect([0, 1, 2, 3, 4].filter((i) => buttonTextsOf(i).some((t) => t.includes('消す')))).toEqual(
+      [0],
+    )
   })
 })
 
@@ -300,9 +316,9 @@ describe('生成済み素材を編集できる（§1-11・要望B）', () => {
     // ⚠ タブ名で「編集中」と分かる（新規と同じ名前だと、どちらを保存するのか分からない）
     expect(wrapper!.find('.tabs').text()).toContain('（編集）')
     // 全体.マップ名（`object` の中の `string`）に、保存された値が入っている
-    expect((form.find('.field--object .field--string input').element as HTMLInputElement).value).toBe(
-      'ためしの迷宮',
-    )
+    expect(
+      (form.find('.field--object .field--string input').element as HTMLInputElement).value,
+    ).toBe('ためしの迷宮')
     // 部屋が 2 件ぶん復元されている（空のフォームではない）
     const rooms = form
       .findAll('.field--array')
@@ -325,7 +341,9 @@ describe('生成済み素材を編集できる（§1-11・要望B）', () => {
     // 名前だけ直す（部屋には触らない）
     await wrapper!.find('form.tform .field--object .field--string input').setValue('なおした迷宮')
     await wrapper!.find('form.tform').trigger('submit')
-    await waitForSaved((list) => (list[0]?.data.overview as { name?: string })?.name === 'なおした迷宮')
+    await waitForSaved(
+      (list) => (list[0]?.data.overview as { name?: string })?.name === 'なおした迷宮',
+    )
 
     // ⚠⚠ ここが本命。id が作り直されていたら、置いた参照が全部「行方不明のパート」になる。
     expect(wrapper!.findAll('.part-ref__missing')).toHaveLength(0)

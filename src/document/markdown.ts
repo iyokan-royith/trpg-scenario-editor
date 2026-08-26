@@ -1,9 +1,17 @@
 import MarkdownIt from 'markdown-it'
-import { MarkdownParser, MarkdownSerializer } from 'prosemirror-markdown'
+import {
+  MarkdownParser,
+  MarkdownSerializer,
+  type MarkdownSerializerState,
+} from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Slice } from '@tiptap/pm/model'
 import { documentSchema } from './schema'
 import { restoreHeadingMarks, markLength } from './heading'
+import { PART_REF_INLINE_NODE, PART_REF_NODE } from './partRefExtension'
+import { flattenOutline, outline } from './outline'
+import { inlineText, partKeyOf, type Part } from '../template/model'
+import { offsetMarkdownHeadings } from '../template/liquid/headingOffset'
 
 /**
  * md の入出力。
@@ -35,6 +43,24 @@ import { restoreHeadingMarks, markLength } from './heading'
  *
  * ⚠ `partRef` を含む md の往復は **P3 の責務**。P1 が扱うのは手書き本文だけ。
  *    書き出しでは参照ノードを **黙って捨てない**（下記 partRef のシリアライザを参照）。
+ *
+ * ## ⭐⭐ パート参照の展開（2026-08-26・§1-13-1h のロイス決定）
+ *
+ * `docToMd(doc, { parts })` を渡すと、パート参照は**コメントではなくそのパートの md 本文**として
+ * 書き出され、そこで `offsetMarkdownHeadings`（§1-13-1d・P-c）が**配置階層ぶん**当たる。
+ *
+ * ⚠⚠ **何を捨てたかを正確に書いておく**（ロイス:「**読み戻す事は捨ててしまって構わない**」）:
+ *
+ * | | |
+ * |---|---|
+ * | 書き出した md を**読み戻す** | ⚠ **パート参照には戻らない**（展開された本文が手書き本文として入る） |
+ * | 手書き本文の往復 | **無傷**（`mdToDoc` は 1 文字も変えていない） |
+ * | 保存データ | **無傷**（md は入出力形式の一つで、単一の真実は `doc`・§1-2） |
+ *
+ * ⚠ **`parts` を渡さない `docToMd(doc)` は従来どおりコメントで書き出す。**
+ *   これは互換のためではなく、**「素材一覧を知らない層」から呼ばれる経路が実在する**ため
+ *   （P1 の往復テストなど）。展開できないのに黙って参照を消すのが最悪なので、
+ *   その場合は今までどおり**消さずにコメントで残す**。
  */
 
 /**
@@ -97,6 +123,105 @@ function parserFor(schema: Schema): MarkdownParser {
     parsers.set(schema, found)
   }
   return found
+}
+
+/**
+ * パート参照 1 個ぶんの展開結果。`null` は「展開しない」＝コメントのまま出す。
+ *
+ * ⚠ `null` になるのは 2 通り: ①`parts` を渡されていない ②素材側から消えた参照（dangling）。
+ *   どちらも**黙って消してはいけない**（消すと「書き出して読み戻したら参照が失われていた」
+ *   という、往復テストが緑のまま起きる事故になる）。
+ */
+type ExpansionEntry = string | null
+
+/**
+ * ⚠⚠ **順番で消費する**（ノードの同一性では引けない）。
+ *
+ * ProseMirror の `Node` は**同じインスタンスが 2 箇所に現れうる**（コピー＆ペーストは
+ * `Slice` の中のノードをそのまま挿す）。`Map<PMNode, level>` にすると、
+ * **同じパートを 2 箇所に置いたとき（S7-3）に両方が同じ深さになる**——
+ * しかも**例外は出ず、片方の深さが黙って間違う**。
+ *
+ * → だから「文書順に並べた配列＋カーソル」で持つ。
+ *   ⚠ 代わりに**ずれる**危険が出るので、下の 2 つで鳴らす:
+ *   ①カーソルが配列を越えたら throw ②書き出し後に「全部消費したか」を照合する。
+ */
+interface ExpansionCursor {
+  entries: ExpansionEntry[]
+  index: number
+}
+
+/** `serialize()` の `options` はそのまま `state.options` へ渡る（型が狭いので受け渡しだけ cast する）。 */
+interface PartExpansionOption {
+  partExpansion?: ExpansionCursor
+}
+
+type SerializeOptions = Parameters<MarkdownSerializer['serialize']>[1]
+
+/**
+ * 次のパート参照ぶんの展開結果を取り出す。
+ *
+ * ⚠ **オーバーランは黙って素通りさせない。** カーソル方式の唯一の弱点が
+ *   「走査順のずれ」なので、ずれた瞬間に鳴らす（黙ると以降の深さが全部ずれる）。
+ */
+function takeExpansion(state: MarkdownSerializerState): ExpansionEntry {
+  const cursor = (state.options as PartExpansionOption).partExpansion
+  if (!cursor) return null
+  if (cursor.index >= cursor.entries.length) {
+    throw new Error(
+      'パート参照の展開表を使い切りました（走査順が食い違っています）: ' +
+        `${cursor.index + 1} 個目 / 表は ${cursor.entries.length} 個`,
+    )
+  }
+  const entry = cursor.entries[cursor.index]!
+  cursor.index += 1
+  return entry
+}
+
+/**
+ * 文書順に「各パート参照をどう展開するか」を決める（§1-13-1h）。
+ *
+ * ⭐⭐ **基準レベルは `outline(doc, parts)` が解決した最終の `level` を使う**（§1-13-1d 決定1b）。
+ *   ⚠ `depthUnder(enclosing)` ではない——左ペインの上げ下げによる**明示の深さ**（`attrs.depth`）が
+ *   優先される（§1-3-3e-2）ので、深さの単一の真実は `outline.ts` の側にある。
+ *   ここで計算し直すと、**画面のツリーと書き出した md が食い違う**（台帳 A71 と同型）。
+ *
+ * ⚠ 走査は `doc.descendants` の**絶対 pos**で、`outline()` が inline 参照に付ける
+ *   `offset + 1 + childPos` と同じ値になる（テストで固定してある）。
+ *
+ * ⚠ **`outline()` に出ないパート参照がある**（`form` が `section` でないもの＝図・本文中）。
+ *   それらは**見出しの深さが定義されない**ので、**オフセットせず本文をそのまま出す**。
+ */
+function buildExpansionPlan(doc: PMNode, parts: Part[]): ExpansionEntry[] {
+  const index = new Map(parts.map((part) => [partKeyOf(part.instanceId, part.partId), part]))
+  const levelByPos = new Map<number, number>()
+  for (const item of flattenOutline(outline(doc, parts))) {
+    if (item.kind === 'partRef') levelByPos.set(item.pos, item.level)
+  }
+
+  const entries: ExpansionEntry[] = []
+  doc.descendants((node, pos) => {
+    const name = node.type.name
+    if (name !== PART_REF_NODE && name !== PART_REF_INLINE_NODE) return true
+
+    const part = index.get(partKeyOf(String(node.attrs.instanceId), String(node.attrs.partId)))
+    // dangling（素材側から消えた参照）はコメントのまま残す。
+    if (!part) {
+      entries.push(null)
+      return false
+    }
+
+    // ⚠ `inlineText` は画像の `Inline` を alt 文字列に畳む。md の画像書き出しは
+    //   §1-13 の未決事項（「md 書き出しで何を画像化するか」）なので、ここでは決めない。
+    //   `要検証[画像を HTML/md にどう載せるかが決まったとき、ここが alt でよいかを取り直す]`
+    const body = inlineText(part.body)
+
+    // ⚠ inline の参照は**段落の途中**に居るので、見出しという概念が無い。オフセットしない。
+    const baseLevel = name === PART_REF_INLINE_NODE ? undefined : levelByPos.get(pos)
+    entries.push(baseLevel === undefined ? body : offsetMarkdownHeadings(body, baseLevel))
+    return false
+  })
+  return entries
 }
 
 export const markdownSerializer = new MarkdownSerializer(
@@ -167,21 +292,34 @@ export const markdownSerializer = new MarkdownSerializer(
       state.text(node.text ?? '')
     },
     /**
-     * ⚠ P1 の md にはパートの中身を展開しない（展開は P3 の責務）。
-     *   ただし **黙って消しはしない**。消すと「書き出して読み戻したら参照が失われていた」
-     *   という、往復テストが緑のまま起きる事故になる。
+     * ⭐ `parts` を渡されていれば**パートの md 本文へ展開する**（§1-13-1h）。
+     *   渡されていない／dangling のときは **黙って消さず**コメントで残す
+     *   （消すと「書き出して読み戻したら参照が失われていた」という、
+     *   往復テストが緑のまま起きる事故になる）。
+     *
+     * ⚠ `state.text(body, false)` で書くのは 2 つの理由から:
+     *   ①`escape: false` — 本文は**もう md である**。エスケープすると `#` が `\#` になる
+     *   ②`text()` は改行で分けて各行に `delim` を付けてくれる（`write()` は 1 行用）
      */
     partRef(state, node) {
-      state.write(`<!-- partRef ${node.attrs.instanceId} ${node.attrs.partId} -->`)
+      const expanded = takeExpansion(state)
+      state.text(
+        expanded ?? `<!-- partRef ${node.attrs.instanceId} ${node.attrs.partId} -->`,
+        false,
+      )
       state.closeBlock(node)
     },
     /**
-     * ⚠ inline 版も同じ理由で **黙って消さない**。
+     * ⚠ inline 版は**オフセットしない**（段落の途中に見出しは無い・`buildExpansionPlan` を参照）。
      *   ⚠ `state.text(..., false)` にするのは、`<!-- -->` の記号を md にエスケープさせないため
      *   （`state.write` はブロックの行頭に書く関数なので、文の途中には使えない）。
      */
     partRefInline(state, node) {
-      state.text(`<!-- partRef ${node.attrs.instanceId} ${node.attrs.partId} -->`, false)
+      const expanded = takeExpansion(state)
+      state.text(
+        expanded ?? `<!-- partRef ${node.attrs.instanceId} ${node.attrs.partId} -->`,
+        false,
+      )
     },
   },
   {
@@ -210,6 +348,15 @@ export function mdToDoc(markdown: string, schema: Schema = documentSchema): PMNo
   return restoreHeadingMarks(doc)
 }
 
+/** `docToMd` の追加入力。 */
+export interface DocToMdOptions {
+  /**
+   * パート参照を展開するための素材一覧（§1-13-1h）。
+   * ⚠ 省略すると従来どおり `<!-- partRef ... -->` のコメントで書き出す。
+   */
+  parts?: Part[]
+}
+
 /**
  * ドキュメント → md 文字列。
  *
@@ -217,8 +364,28 @@ export function mdToDoc(markdown: string, schema: Schema = documentSchema): PMNo
  *   ここを通さないと、**外から渡された「記号の無い見出し」を md だけが見出しとして出し、
  *   ツリーは落とす**という食い違いが復活する（3巡目監査の差し戻し）。
  */
-export function docToMd(doc: PMNode): string {
-  return markdownSerializer.serialize(restoreHeadingMarks(doc))
+export function docToMd(doc: PMNode, options: DocToMdOptions = {}): string {
+  // ⚠⚠ **記号を補った後の doc で計画を立てる。** `restoreHeadingMarks` は見出しの
+  //   テキスト長を変えうるので、補う前の doc で位置を測ると `outline()` の pos とずれる。
+  const restored = restoreHeadingMarks(doc)
+  if (!options.parts) return markdownSerializer.serialize(restored)
+
+  const cursor: ExpansionCursor = { entries: buildExpansionPlan(restored, options.parts), index: 0 }
+  // ⚠ `serialize()` の options の型は `{ tightLists?: boolean }` としか宣言されていないが、
+  //   実体は**そのまま `state.options` に置かれる**（prosemirror-markdown の設計・d.ts の注記
+  //   「The options passed to the serializer」）。型が狭いだけなので、受け渡しだけ cast する。
+  const out = markdownSerializer.serialize(restored, {
+    partExpansion: cursor,
+  } as unknown as SerializeOptions)
+  // ⚠⚠ **消費し残しは「走査順がずれた」の証拠**（シリアライザが参照を 1 個飛ばした）。
+  //   飛ばされると以降の展開が 1 個ずつずれ、**深さが黙って間違う**ので、ここで鳴らす。
+  if (cursor.index !== cursor.entries.length) {
+    throw new Error(
+      'パート参照の展開表が余りました（走査順が食い違っています）: ' +
+        `${cursor.index} 個消費 / 表は ${cursor.entries.length} 個`,
+    )
+  }
+  return out
 }
 
 /**

@@ -1,7 +1,7 @@
 {
   "id": "builtin.dungeon-map",
   "name": "迷宮マップ",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "fields": [
     {
       "key": "overview",
@@ -400,7 +400,7 @@
       "label": "部屋シート（たたき台）",
       "form": "section",
       "over": "rooms",
-      "template": "# {{ at.row }}{{ at.col }}: {{ name }}\n\n（このテンプレートは**たたき台**です。`liquidOutputs[].template` を書き換えてください）\n"
+      "template": "{%- comment -%}\n部屋シートのたたき台。省略されうるフィールドは必ず {% if %} で守ること（§1-13-1g）。\n戦場の区画は「キー名の配列」と「見出しの配列」を突き合わせて回している。\n{%- endcomment -%}\n# {% if at %}{{ at.row }}{{ at.col }}: {% endif %}{{ name | default: \"（名称未設定）\" }}\n{%- if description %}\n\n{{ description }}\n{%- endif %}\n{%- if encounter %}\n\n## 遭遇\n\n* 種別: {{ encounter.kind | default: \"（未設定）\" }}\n{%- if encounter.enemies.size > 0 %}\n\n| 敵 | 数 | 注釈 |\n|---|---|---|\n{%- for e in encounter.enemies %}\n| {{ e.name | default: \"\" }} | {{ e.count | default: \"\" }} | {{ e.note | default: \"\" | newline_to_br | strip_newlines }} |\n{%- endfor %}\n{%- endif %}\n{%- if encounter.battlefield %}\n{%- assign areaKeys = \"enemyFront,enemyRear,enemyBase,allyFront\" | split: \",\" %}\n{%- assign areaLabels = \"敵前衛,敵後衛,敵本陣,味方前衛\" | split: \",\" %}\n\n| 場所 | 敵 | トラップ |\n|---|---|---|\n{%- for key in areaKeys %}\n{%- if encounter.battlefield[key] %}\n{%- assign area = encounter.battlefield[key] %}\n| {{ areaLabels[forloop.index0] }} | {% if area.enemies %}{% for e in area.enemies %}【{{ e.name }}】*{{ e.count }} {% endfor %}{% endif %} | {% if area.traps %}{% for t in area.traps %}{{ t.name }} {% endfor %}{% endif %} |\n{%- endif %}\n{%- endfor %}\n{%- endif %}\n{%- endif %}\n{%- if traps.size > 0 %}\n\n## トラップ\n{% for t in traps %}\n* {{ t.name | default: \"（名称未設定）\" }}{% if t.target %}（対象: {{ t.target.kind }}）{% endif %}\n{%- endfor %}\n{%- endif %}\n{%- if roomStats %}\n\n## 部屋データ\n{% if roomStats.trapCount %}\n* トラップ数: {{ roomStats.trapCount.displayed | default: \"\" }}\n{%- endif %}\n{%- if roomStats.enemyCount %}\n* エネミー数: {{ roomStats.enemyCount.displayed | default: \"\" }}{% if roomStats.enemyCount.reason %}（{{ roomStats.enemyCount.reason }}）{% endif %}\n{%- endif %}\n{%- endif %}\n"
     }
   ]
 }

@@ -218,6 +218,135 @@ describe('⚠ parseLimit だけ例外の形が違う（研究 2026-08-26 の 6b�
 })
 
 // ---------------------------------------------------------------------------
+// lenientIf（§1-13-1g・省略可フィールドを守る手段）
+// ---------------------------------------------------------------------------
+
+/**
+ * ⭐⭐ **この describe の主眼は「通るようになったこと」ではなく「境界がどこか」**である。
+ *
+ * `lenientIf: true` は `strictVariables: true` の効き方を**条件式の中だけ**緩める。
+ * つまり**保護を 1 つ失って 1 つ残した**トレードオフで、
+ * **どちらの側も述語にしておかないと、将来この行を消したときに何も鳴らない**
+ * （失った側だけ書くと「厳しくなった」変異が緑になり、
+ *   残った側だけ書くと「もっと緩めた」変異が緑になる）。
+ *
+ * ⚠ ここは **`strictVariables: true` が立ったまま**の話である。
+ *   下の「出力の誤字は ERR のまま」がその証拠を兼ねている。
+ */
+describe('lenientIf — 条件式の中だけ未定義を許す（§1-13-1g）', () => {
+  it.each(ENGINES)('%s: 決定どおりフラグが立っている', (_name, engine) => {
+    // ⚠ 値述語だが、下の振る舞い述語と対で置いている
+    //   （`liquidOptionsFor` から落としても振る舞い側が鳴る。ここは「意図」を固定する側）。
+    expect(engine.options.lenientIf).toBe(true)
+    expect(liquidOptionsFor('markdown').lenientIf).toBe(true)
+    expect(liquidOptionsFor('html').lenientIf).toBe(true)
+  })
+
+  it.each(ENGINES)(
+    '%s: 無いフィールドを `{% if %}` で守れる（空になる）',
+    async (_name, engine) => {
+      expect(
+        await engine.parseAndRender('{% if description %}[{{ description }}]{% endif %}', {
+          name: '入場ゲート',
+        }),
+      ).toBe('')
+    },
+  )
+
+  it('⚠ 反証: 有るときは中身が出る（`{% if %}` が常に偽になったわけではない）', async () => {
+    expect(
+      await markdownLiquidEngine.parseAndRender(
+        '{% if description %}[{{ description }}]{% endif %}',
+        {
+          description: 'あり',
+        },
+      ),
+    ).toBe('[あり]')
+  })
+
+  it('無い配列を `{% if %}` で守れる（`{% for %}` へ入らない）', async () => {
+    expect(
+      await markdownLiquidEngine.parseAndRender(
+        '{% if traps %}{% for t in traps %}<{{ t.name }}>{% endfor %}{% endif %}',
+        { name: 'さばくエリア' },
+      ),
+    ).toBe('')
+  })
+
+  it('無い親オブジェクトを `{% if %}` で守れる（子の参照まで到達しない）', async () => {
+    expect(
+      await markdownLiquidEngine.parseAndRender(
+        '{% if encounter %}{{ encounter.kind }}{% endif %}',
+        {
+          name: 'さばくエリア',
+        },
+      ),
+    ).toBe('')
+  })
+
+  it('`default` フィルタも通るようになる（§1-13-1g の実測表 5 行目）', async () => {
+    expect(
+      await markdownLiquidEngine.parseAndRender('[{{ description | default: "" }}]', {
+        name: 'さばくエリア',
+      }),
+    ).toBe('[]')
+  })
+
+  it('`{% unless %}` も条件式なので通る', async () => {
+    expect(
+      await markdownLiquidEngine.parseAndRender('{% unless traps %}罠なし{% endunless %}', {
+        name: 'さばくエリア',
+      }),
+    ).toBe('罠なし')
+  })
+
+  /**
+   * ⚠⚠ **失った保護**。これは「望ましい振る舞い」ではなく**代償**であり、
+   *   §1-13-1g がロイスへ提示した表の一行そのものである。
+   *   → **緑であることが「代償を払ったまま」の証明**になる。フラグを外すとここが赤くなり、
+   *     「保護が戻った」ことが読める。
+   */
+  it('⚠ 代償: 条件式の中の誤字は黙って通る（「フィールドが無い」と区別できない）', async () => {
+    expect(
+      await markdownLiquidEngine.parseAndRender('{% if descrption %}出る{% endif %}', {
+        description: 'あり',
+      }),
+    ).toBe('')
+  })
+
+  /**
+   * ⭐⭐⭐ **残った保護。ここが §1-13-1c の主眼（黙って空文字にしない）そのもの。**
+   *   `lenientIf` を「`strictVariables` ごと緩める」と読み違えた変異は、**ここだけが赤くなる。**
+   */
+  it('⭐ 出力 `{{ }}` の中の誤字は ERR のまま（緩んだのは条件式だけ）', async () => {
+    const error = await markdownLiquidEngine
+      .parseAndRender('[{{ descrption }}]', { description: 'あり' })
+      .then(
+        () => null,
+        (e: unknown) => e as LiquidError,
+      )
+    expect(error).toBeInstanceOf(UndefinedVariableError)
+    expect(error!.message).toContain('undefined variable: descrption')
+  })
+
+  it('⭐ 条件で守った "中" でも、出力の誤字は鳴る（守れるのは到達だけ）', async () => {
+    await expect(
+      markdownLiquidEngine.parseAndRender('{% if description %}{{ descrption }}{% endif %}', {
+        description: 'あり',
+      }),
+    ).rejects.toThrow(UndefinedVariableError)
+  })
+
+  it('⭐ `{% for %}` を裸で書けば従来どおり鳴る（守るのはテンプレ作者の仕事のまま）', async () => {
+    await expect(
+      markdownLiquidEngine.parseAndRender('{% for t in traps %}{{ t.name }}{% endfor %}', {
+        name: 'さばくエリア',
+      }),
+    ).rejects.toThrow(UndefinedVariableError)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // バージョンの下限（CVE-2026-45618・critical・10.26.0 未満は RCE）
 // ---------------------------------------------------------------------------
 

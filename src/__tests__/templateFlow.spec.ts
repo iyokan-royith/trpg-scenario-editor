@@ -78,12 +78,15 @@ describe('テンプレート一覧（完了条件 #1）', () => {
 })
 
 describe('保存するとインスタンスが増え、パートが生まれる（完了条件 #4）', () => {
-  it('⭐ 部屋を 2 件入れて保存すると 1＋2＋1 = 4 パート（derivePartsOf を通っている）', async () => {
+  it('⭐ 部屋を 2 件入れて保存すると 同期 1＋2＋1 ＋ liquid 2 = 6 パート', async () => {
     const app = await mountApp()
     const store = usePartStore()
     const before = store.parts.length
 
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
 
     // overview.name（独立章のタイトルになる）
     await app.find('.field--object .field--string input').setValue('ためしの迷宮')
@@ -102,19 +105,29 @@ describe('保存するとインスタンスが増え、パートが生まれる�
     const instances = Object.values(store.instances)
     expect(instances).toHaveLength(1)
     expect(instances[0]!.templateId).toBe(DUNGEON_MAP_TEMPLATE_ID)
-    expect((instances[0]!.data.rooms as unknown[])).toHaveLength(2)
+    expect(instances[0]!.data.rooms as unknown[]).toHaveLength(2)
 
     // ⚠⚠ パートは保存されない。データが増えた結果として**導出で**生まれる（P0 知見 1）。
     const parts = store.partsOfInstance(instances[0]!.id)
-    expect(store.parts.length - before).toBe(4)
-    expect(parts.map((p) => p.form)).toEqual(['section', 'section', 'section', 'figure'])
+    // ⭐⭐ **内訳で数える**（合計だけだと、片方の経路が死んでももう片方が増えれば緑になる）。
+    //   ⚠ **2026-08-26 の §1-13-1g までは合計 4 だった**——`roomSheet` のたたき台が
+    //   `{{ at.row }}` を裸で参照していて、**新しく足した空の部屋では必ず例外**になり、
+    //   liquid のパートが 1 件も生まれていなかったため（監査 A108）。
+    //   たたき台を `{% if %}` で守る形に直した結果、**部屋 2 件ぶんが増えて 6 になった。**
+    //   → **性質が壊れた赤ではなく、壊れていた側が直った結果である。**
+    const sync = parts.filter((p) => !p.partId.startsWith('roomSheet'))
+    const liquid = parts.filter((p) => p.partId.startsWith('roomSheet'))
+    expect(sync).toHaveLength(4) // 1（全体）＋ 2（部屋）＋ 1（図）
+    expect(liquid).toHaveLength(2) // `liquidOutputs` の `over: "rooms"`
+    expect(store.parts.length - before).toBe(6)
+    expect(sync.map((p) => p.form)).toEqual(['section', 'section', 'section', 'figure'])
     expect(parts[0]!.title).toBe('ためしの迷宮')
 
     // ⚠⚠ **期待値を保存されたデータから作らない**（台帳 A53）。
     //   以前はここで `data.rooms.map(r => r.id)` を期待値にしていたため、
     //   **要素 id を添字にする変異を当てても緑のまま**だった（＝検査になっていない）。
     //   → 仕様（§1-4「配列由来は `<key>:<要素id>`」・`newItemId()` の形・P0 知見 2）から立て直す。
-    const roomPartIds = parts.slice(1, 3).map((p) => p.partId)
+    const roomPartIds = sync.slice(1, 3).map((p) => p.partId)
     roomPartIds.forEach((partId, index) => {
       expect(partId.startsWith('rooms:')).toBe(true)
       const itemId = partId.slice('rooms:'.length)
@@ -130,7 +143,10 @@ describe('保存するとインスタンスが増え、パートが生まれる�
 
   it('保存したものはリロードしても残る（IndexedDB へ書かれている）', async () => {
     const app = await mountApp()
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
     await app.find('.field--object .field--string input').setValue('のこる迷宮')
     await app.find('form.tform').trigger('submit')
     await flushPromises()
@@ -142,7 +158,10 @@ describe('保存するとインスタンスが増え、パートが生まれる�
 
   it('保存するとフォームが閉じ、生まれた件数を知らせる', async () => {
     const app = await mountApp()
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
     await app.find('form.tform').trigger('submit')
     await flushPromises()
 
@@ -184,7 +203,10 @@ describe('フォームの画像欄から作った素材（利用者定義テン�
     store.registerDefinition(JSON.parse(JSON.stringify(PHOTO_DEF)))
     await flushPromises()
 
-    await app.findAll('.tpane__item').find((b) => b.text() === '登場人物')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '登場人物')!
+      .trigger('click')
     await app.find('.field--string input').setValue('たんていA')
 
     const input = app.find('.field--image input[type="file"]').element as HTMLInputElement
@@ -212,7 +234,10 @@ describe('フォームの画像欄から作った素材（利用者定義テン�
     usePartStore().registerDefinition(JSON.parse(JSON.stringify(PHOTO_DEF)))
     await flushPromises()
 
-    await app.findAll('.tpane__item').find((b) => b.text() === '登場人物')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '登場人物')!
+      .trigger('click')
     await app.find('.field--string input').setValue('たんていB')
     await app.find('form.tform').trigger('submit')
     await flushPromises()
@@ -227,7 +252,10 @@ describe('フォームの画像欄から作った素材（利用者定義テン�
     store.registerDefinition(JSON.parse(JSON.stringify(PHOTO_DEF)))
     await flushPromises()
 
-    await app.findAll('.tpane__item').find((b) => b.text() === '登場人物')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '登場人物')!
+      .trigger('click')
     await app.find('.field--string input').setValue('たんていC')
     await app.find('form.tform').trigger('submit')
     await flushPromises()
@@ -249,7 +277,10 @@ describe('フォームの画像欄から作った素材（利用者定義テン�
 describe('判別子付き共用体は、同梱定義の両方の枝が入力できる（§1-3 の要検証）', () => {
   it('⭐ 「坂道（高い方つき）」と「幻の路（判別子だけ）」を入れて保存し、読み直せる', async () => {
     const app = await mountApp()
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
 
     const corridors = app
       .findAll('.field--array')
@@ -287,7 +318,10 @@ describe('判別子付き共用体は、同梱定義の両方の枝が入力で�
 
   it('⭐ 遭遇（共有フィールドつきの `oneOf`）も両方の枝が入り、読み直せる', async () => {
     const app = await mountApp()
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
 
     const rooms = app
       .findAll('.field--array')
@@ -318,7 +352,10 @@ describe('判別子付き共用体は、同梱定義の両方の枝が入力で�
 describe('実機フィードバックの反映（§1-3-3d）', () => {
   it('⭐⭐ 座標は 9 択ひとつで入り、保存形は `{row, col}` のまま', async () => {
     const app = await mountApp()
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
 
     const entrances = app
       .findAll('.field--array')
@@ -340,7 +377,10 @@ describe('実機フィードバックの反映（§1-3-3d）', () => {
 
   it('⭐ トラップ名は自由入力（ルールブックに無い名前も入る）', async () => {
     const app = await mountApp()
-    await app.findAll('.tpane__item').find((b) => b.text() === '迷宮マップ')!.trigger('click')
+    await app
+      .findAll('.tpane__item')
+      .find((b) => b.text() === '迷宮マップ')!
+      .trigger('click')
 
     const rooms = app
       .findAll('.field--array')
