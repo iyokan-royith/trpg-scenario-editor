@@ -20,6 +20,7 @@ import type { TemplateDefinition, TemplateInstance } from '../../model'
 import { deriveLiquidPartsOf, type LiquidPart } from '../outputs'
 import { markdownLiquidEngine } from '../engine'
 import { DUNGEON_MAP_TEMPLATE_ID } from '../../render/dungeonMap'
+import { pruneEmpty } from '../../form'
 
 /** ⚠ 同梱テンプレも利用者の持ち込みと同じ経路（`loader.ts`）で読む（Q6）。 */
 function dungeonMapDefinition(): TemplateDefinition {
@@ -154,5 +155,100 @@ describe('⚠ 回避ではなく解消であること — 省略可フィール�
     expect(byId.get('room-2')).toContain('| マッハペンギン | 4 |  |')
     // room-6 の【兵士】は note を持つ（戦場の表には出ないので、落ちないことだけを見る）
     expect(byId.get('room-6')).toContain('| 敵前衛 |')
+  })
+})
+
+/**
+ * ⚠⚠ **葉（いちばん下のフィールド）の欠落**（監査 A114 の差し戻し）。
+ *
+ * 上の describe は**節ごと省略される**形（`encounter` が丸ごと無い等）を見ていた。
+ * こちらは**節はあるが中の 1 個が無い**形で、`{% if %}` では守れない
+ * （守るべきなのは到達ではなく**出力**なので `| default:` の側）。
+ *
+ * ⚠ **UI から到達可能**である——`form.ts` の `pruneEmpty` は**空文字を落とす**ので、
+ *   「戦場の敵を名前空欄で足す」だけで `name` が保存データから消える。
+ *   下の最後のテストで、その経路を**実際に駆動して**確かめてある（推測ではない）。
+ *
+ * ⚠ **重大度は A108 と同じ**: `deriveLiquidPartsOf` は 1 件目で throw し、
+ *   `partStore` は**素材単位**で catch するので、その部屋だけでなく
+ *   **その素材の liquid パートが全滅**する。
+ */
+describe('⚠ 葉の欠落でも落ちない（監査 A114・戦場の内部不整合）', () => {
+  it('戦場の敵に `name` が無い（名前空欄で足した敵）', async () => {
+    const parts = await renderRooms([
+      {
+        id: 'r',
+        at: { row: 'A', col: 1 },
+        name: 'ため',
+        encounter: {
+          kind: '敵対',
+          shape: 'battlefield',
+          battlefield: { enemyFront: { enemies: [{ id: 'e1', count: 2 }] } },
+        },
+      },
+    ])
+    expect(parts[0]!.rendered).toContain('| 敵前衛 |')
+  })
+
+  it('戦場のトラップに `name` が無い', async () => {
+    const parts = await renderRooms([
+      {
+        id: 'r',
+        encounter: {
+          kind: '敵対',
+          shape: 'battlefield',
+          battlefield: { allyFront: { traps: [{ id: 't1' }] } },
+        },
+      },
+    ])
+    expect(parts[0]!.rendered).toContain('| 味方前衛 |')
+  })
+
+  it('部屋のトラップに `target` はあるが `kind` が無い', async () => {
+    const parts = await renderRooms([{ id: 'r', traps: [{ id: 't1', name: 'わな', target: {} }] }])
+    expect(parts[0]!.rendered).toContain('わな')
+  })
+
+  it('`at` はあるが `row` が無い（座標を片方だけ入れた）', async () => {
+    const parts = await renderRooms([{ id: 'r', at: { col: 3 }, name: 'ため' }])
+    expect(parts[0]!.rendered).toMatch(/^# /)
+  })
+
+  /**
+   * ⭐ **A114 に添えられた `要検証` を実駆動で閉じる**——
+   *   「UI から戦場の敵を名前空欄で保存したとき `name` が保存データに現れないか」。
+   *   ⚠ フォームの下書きを組み立てて**本物の `pruneEmpty`** に通す
+   *   （構造からの推測ではなく、保存に使われる関数そのものを駆動する）。
+   */
+  it('⭐ 名前空欄の敵は `pruneEmpty` で `name` を落とす → その形でもテンプレが落ちない', async () => {
+    const def = dungeonMapDefinition()
+    const draft = {
+      rooms: [
+        {
+          id: 'item-1',
+          at: { row: 'A', col: 1 },
+          name: 'ため',
+          encounter: {
+            shape: 'battlefield',
+            kind: '敵対',
+            battlefield: {
+              enemyFront: { enemies: [{ id: 'item-2', name: '', count: 3, note: '' }], traps: [] },
+            },
+          },
+        },
+      ],
+    }
+    const data = pruneEmpty(def.fields, draft)
+    const room = (data.rooms as Record<string, unknown>[])[0]!
+    const front = (
+      (room.encounter as Record<string, unknown>).battlefield as Record<string, unknown>
+    ).enemyFront as Record<string, unknown>
+    const enemy = (front.enemies as Record<string, unknown>[])[0]!
+    // ⚠ 前提の確認: 本当に `name` が消えているか（消えていなければ以下は何も検査していない）
+    expect('name' in enemy).toBe(false)
+    expect(enemy.count).toBe(3)
+
+    const parts = await renderRooms([room as Room])
+    expect(parts[0]!.rendered).toContain('| 敵前衛 |')
   })
 })
