@@ -243,7 +243,9 @@ describe('⭐ 並存 — 同じ定義に両方書いても、既存の経路は 
 
 describe('エンジン', () => {
   it('注入したエンジンが使われる（P-b がオプションを固定する差し込み口）', async () => {
-    const engine = createLiquidEngine()
+    // ⚠ P-b で `createLiquidEngine` は用途（＝エスケープの有無）を必須引数にした。
+    //   既定のエンジンと同じ側（md）を指定して、この検査の意味を変えないようにしている。
+    const engine = createLiquidEngine('markdown')
     const parts = await deriveLiquidPartsOf(
       instanceOf({ name: 'ねこ' }),
       defOf([{ kind: 'liquid', key: 'k', label: 'l', form: 'inline', template: '{{ name }}' }]),
