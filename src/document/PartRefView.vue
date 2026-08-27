@@ -132,8 +132,11 @@ onBeforeUnmount(revokeAll)
            選択を動かし、`v-if="selected"` のボタンが **click が飛ぶ前に消える**
            （＝押しても何も起きないボタンになる）。draggable なノードなので
            ドラッグ開始とも当たる。 -->
+      <!-- ⚠⚠ `part` が要る。行方不明のパートには開く中身が無いので、
+           ここを `collapsible` だけで出すと**押しても何も起きないボタン**になる
+           （このファイルが 2 箇所で禁じている型を、自分で作ることになる）。 -->
       <button
-        v-if="collapsible"
+        v-if="collapsible && part"
         type="button"
         class="part-ref__toggle"
         :aria-expanded="expanded"

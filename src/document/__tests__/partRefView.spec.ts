@@ -290,6 +290,18 @@ describe('版ごとの違い', () => {
     expect(wrapper.find('.part-ref__body').exists()).toBe(true)
   })
 
+  it('⚠⚠ 行方不明のパートには「開く」を出さない（開く中身が無い＝押しても何も起きないボタン）', async () => {
+    await mountWith(PART_REF_NODE)
+    const inst = usePartStore().instances.i1
+    if (!inst) throw new Error('インスタンス i1 が見つかりません')
+    inst.data.区画 = []
+    await nextTick()
+
+    // 前提の確認: 行方不明として見えている
+    expect(wrapper.find('.part-ref__missing').exists()).toBe(true)
+    expect(wrapper.find('.part-ref__toggle').exists()).toBe(false)
+  })
+
   it('block 版は開いた後もう一度押すと畳む', async () => {
     await mountWith(PART_REF_NODE)
     await wrapper.find('.part-ref__toggle').trigger('click')
