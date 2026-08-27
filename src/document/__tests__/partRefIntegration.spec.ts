@@ -184,8 +184,19 @@ describe.each(variants)('$label', (variant) => {
     })
   })
 
+  /**
+   * ⚠ **block 版は既定で畳まれている**（§1-13-1i・移行 P-e）。本文そのものを見る断言の前に開く。
+   *   inline 版には「開く」が無い（畳まない決定）ので、こちらでは 0 件クリックになる
+   *   ——つまりこの関数は**変種によって仕事が変わる**が、後続の断言は同じでよい。
+   */
+  async function expandAll() {
+    for (const button of wrapper.findAll('.part-ref__toggle')) await button.trigger('click')
+    await nextTick()
+  }
+
   describe('P0-2: 同じパートを 2 箇所に置いても、データ変更に両方が追従する', () => {
-    it('初期表示が 2 箇所とも同じ内容で出る', () => {
+    it('初期表示が 2 箇所とも同じ内容で出る', async () => {
+      await expandAll()
       const views = wrapper.findAll('.part-ref')
       expect(views).toHaveLength(2)
       for (const v of views) {
@@ -195,6 +206,7 @@ describe.each(variants)('$label', (variant) => {
     })
 
     it('ストア側の値を変えると、置かれた 2 箇所とも変わる', async () => {
+      await expandAll()
       const store = usePartStore()
       const sections = must(store.instances.i1, 'インスタンス i1').data.区画 as Array<
         Record<string, unknown>
